@@ -33,15 +33,20 @@ class TextDetector:
             print(f"Loading OCR model ({mode}) …", flush=True)
             self._reader = easyocr.Reader(self._languages, gpu=self._gpu, verbose=False)
 
-    def detect(self, frame: np.ndarray) -> bool:
+    def detect_matches(self, frame: np.ndarray) -> list[dict]:
         self._load()
         results = self._reader.readtext(frame, detail=1)
-        matched = False
+        matches = []
         for _, text, conf in results:
             if conf >= self._threshold and self._pattern.search(text):
-                print(f"[detected] {text!r} (conf={conf:.2f})", flush=True)
-                matched = True
-        return matched
+                matches.append({"text": text, "confidence": float(conf)})
+        return matches
+
+    def detect(self, frame: np.ndarray) -> bool:
+        matches = self.detect_matches(frame)
+        for m in matches:
+            print(f"[detected] {m['text']!r} (conf={m['confidence']:.2f})", flush=True)
+        return len(matches) > 0
 
 
 class TemplateDetector:

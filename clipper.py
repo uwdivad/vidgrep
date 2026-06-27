@@ -133,6 +133,47 @@ class VideoClipper:
         return intervals
 
     # ------------------------------------------------------------------
+    def scan_for_matches(
+        self,
+        detector,
+        *,
+        skip_frames: int = 3,
+        region: Optional[Tuple[int, int, int, int]] = None,
+    ) -> List[dict]:
+        """
+        Iterate frames and return one dict per matched text region per frame:
+        {"timestamp": float, "text": str, "confidence": float}
+        """
+        cap = self._open_reader()
+        matches: List[dict] = []
+        frame_idx = 0
+
+        with tqdm(total=self.frame_count, unit="fr", dynamic_ncols=True,
+                  bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]") as bar:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                if frame_idx % skip_frames == 0:
+                    if region:
+                        x, y, w, h = region
+                        crop = frame[y:y + h, x:x + w]
+                    else:
+                        crop = frame
+                    t = round(frame_idx / self.fps, 3)
+                    for m in detector.detect_matches(crop):
+                        matches.append({
+                            "timestamp": t,
+                            "text": m["text"],
+                            "confidence": round(m["confidence"], 4),
+                        })
+                frame_idx += 1
+                bar.update(1)
+
+        cap.release()
+        return matches
+
+    # ------------------------------------------------------------------
     def extract_clips(
         self,
         intervals: List[Tuple[float, float]],

@@ -5,6 +5,12 @@ from args import build_parser
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "scan":
+        from args import build_scan_parser
+        from scan import run_scan
+        run_scan(build_scan_parser().parse_args(sys.argv[2:]))
+        return
+
     args = build_parser().parse_args()
 
     input_path = Path(args.input)

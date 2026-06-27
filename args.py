@@ -79,6 +79,62 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def build_scan_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="clip scan",
+        description="Scan video files for text matches and write results to JSONL",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_SCAN_USAGE,
+    )
+    p.add_argument(
+        "inputs", nargs="+", metavar="INPUT",
+        help="Video files or directories to scan (directories searched recursively)",
+    )
+    p.add_argument(
+        "--text", "-t", metavar="PATTERN", required=True,
+        help="Text / regex to search for in each frame (case-insensitive)",
+    )
+    p.add_argument(
+        "--output", "-o", metavar="STEM",
+        help="Output file stem (default: scan_<pattern>_<timestamp> in current dir)",
+    )
+    p.add_argument(
+        "--skip-frames", "-s", type=int, default=3, metavar="N",
+        help="Analyse every Nth frame (default: 3)",
+    )
+    p.add_argument(
+        "--threshold", type=float, default=0.5, metavar="0-1",
+        help="Min OCR confidence to count as a match (default: 0.5)",
+    )
+    p.add_argument(
+        "--region", nargs=4, type=int, metavar=("X", "Y", "W", "H"),
+        help="Only scan this rectangle in each frame",
+    )
+    p.add_argument(
+        "--lang", default="en", metavar="CODES",
+        help="Comma-separated EasyOCR language codes (default: en)",
+    )
+    p.add_argument(
+        "--no-gpu", action="store_true",
+        help="Disable CUDA and run everything on CPU",
+    )
+    return p
+
+
+_SCAN_USAGE = """\
+Usage examples
+--------------
+  # Scan a single file
+  python main.py scan match.mp4 --text "GOAL" --output results
+
+  # Scan an entire directory recursively
+  python main.py scan /sports/videos/ --text "GOAL" --output goals
+
+  # Mix files and directories, restrict to a region of the frame
+  python main.py scan game1.mp4 /archive/ --text "SCORE" --region 0 810 1440 270
+"""
+
+
 _USAGE = """\
 Usage examples
 --------------
