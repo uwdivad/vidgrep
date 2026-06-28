@@ -29,24 +29,106 @@ class TextDetector:
     def _load(self):
         if self._reader is None:
             import easyocr
-            mode = "GPU" if self._gpu else "CPU"
+            gpu = self._gpu
+            if gpu:
+                import torch
+                if not torch.cuda.is_available():
+                    print(
+                        "WARNING: GPU requested but CUDA is unavailable — running OCR on "
+                        "CPU (much slower). Reinstall a CUDA build of torch "
+                        "(RTX 5090 needs cu128); pass --no-gpu to silence this.",
+                        flush=True,
+                    )
+                    gpu = False
+            mode = "GPU" if gpu else "CPU"
             print(f"Loading OCR model ({mode}) …", flush=True)
-            self._reader = easyocr.Reader(self._languages, gpu=self._gpu, verbose=False)
+            self._reader = easyocr.Reader(self._languages, gpu=gpu, verbose=False)
+
+    @staticmethod
+    def _group_lines(results, *, y_tol: float = 0.5) -> list[dict]:
+        """Group EasyOCR boxes that share a horizontal line.
+
+        EasyOCR returns one box per text region, so a single visible line
+        like "uwdivad ate a whole pie" arrives as several boxes. We bucket
+        boxes whose vertical centres are close (relative to box height),
+        order each bucket left-to-right, and join the text with spaces.
+        """
+        boxes = []
+        for bbox, text, conf in results:
+            ys = [p[1] for p in bbox]
+            xs = [p[0] for p in bbox]
+            boxes.append({
+                "text": text,
+                "conf": float(conf),
+                "x": min(xs),
+                "y_center": sum(ys) / len(ys),
+                "height": max(max(ys) - min(ys), 1.0),
+            })
+
+        boxes.sort(key=lambda b: b["y_center"])
+        lines: list[dict] = []
+        for b in boxes:
+            for line in lines:
+                if abs(b["y_center"] - line["y_center"]) <= y_tol * max(b["height"], line["height"]):
+                    line["boxes"].append(b)
+                    line["y_center"] = sum(x["y_center"] for x in line["boxes"]) / len(line["boxes"])
+                    line["height"] = max(line["height"], b["height"])
+                    break
+            else:
+                lines.append({"y_center": b["y_center"], "height": b["height"], "boxes": [b]})
+
+        out = []
+        for line in lines:
+            ordered = sorted(line["boxes"], key=lambda b: b["x"])
+            out.append({
+                "boxes": ordered,
+                "text": " ".join(b["text"] for b in ordered),
+            })
+        return out
+
+    def _filter(self, results) -> list[dict]:
+        matches = []
+        for line in self._group_lines(results):
+            if not self._pattern.search(line["text"]):
+                continue
+            # Confidence reflects the box(es) that actually contain the match,
+            # not the surrounding words pulled in to complete the line.
+            match_confs = [b["conf"] for b in line["boxes"] if self._pattern.search(b["text"])]
+            conf = max(match_confs) if match_confs else max(b["conf"] for b in line["boxes"])
+            if conf >= self._threshold:
+                matches.append({"text": line["text"], "confidence": conf})
+        return matches
 
     def detect_matches(self, frame: np.ndarray) -> list[dict]:
         self._load()
-        results = self._reader.readtext(frame, detail=1)
-        matches = []
-        for _, text, conf in results:
-            if conf >= self._threshold and self._pattern.search(text):
-                matches.append({"text": text, "confidence": float(conf)})
-        return matches
+        return self._filter(self._reader.readtext(frame, detail=1))
 
-    def detect(self, frame: np.ndarray) -> bool:
-        matches = self.detect_matches(frame)
+    def detect_matches_batch(self, frames: list[np.ndarray]) -> list[list[dict]]:
+        """OCR a batch of equally-sized frames in one GPU call.
+
+        Falls back to per-frame inference if the EasyOCR build lacks
+        ``readtext_batched`` or the frames can't be stacked.
+        """
+        self._load()
+        if len(frames) == 1:
+            return [self.detect_matches(frames[0])]
+        try:
+            batched = self._reader.readtext_batched(frames, detail=1)
+        except Exception:
+            return [self.detect_matches(f) for f in frames]
+        return [self._filter(res) for res in batched]
+
+    @staticmethod
+    def _announce(matches: list[dict]) -> bool:
         for m in matches:
             print(f"[detected] {m['text']!r} (conf={m['confidence']:.2f})", flush=True)
         return len(matches) > 0
+
+    def detect(self, frame: np.ndarray) -> bool:
+        return self._announce(self.detect_matches(frame))
+
+    def detect_batch(self, frames: list[np.ndarray]) -> list[bool]:
+        return [self._announce(m) for m in self.detect_matches_batch(frames)]
 
 
 class TemplateDetector:
@@ -93,3 +175,8 @@ class TemplateDetector:
             result = cv2.matchTemplate(gray, self._tmpl_gray, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, _ = cv2.minMaxLoc(result)
         return float(max_val) >= self._threshold
+
+    def detect_batch(self, frames: list[np.ndarray]) -> list[bool]:
+        # Template matching is GPU-light and not meaningfully batchable here;
+        # keep the uniform interface so the scan loop can call it the same way.
+        return [self.detect(f) for f in frames]

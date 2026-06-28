@@ -86,13 +86,13 @@ def run_scan(args) -> None:
                 print(f"Warning: skipping '{video_path}': {exc}", file=sys.stderr)
                 continue
 
-            frame_matches = clipper.scan_for_matches(
-                detector, skip_frames=args.skip_frames, region=region
-            )
-            for m in frame_matches:
+            resolved_path = str(video_path.resolve())
+
+            def write_match(m, _file=video_path.name, _path=resolved_path):
+                nonlocal match_count
                 record = {
-                    "file": video_path.name,
-                    "path": str(video_path.resolve()),
+                    "file": _file,
+                    "path": _path,
                     "timestamp": m["timestamp"],
                     "text": m["text"],
                     "confidence": m["confidence"],
@@ -100,6 +100,12 @@ def run_scan(args) -> None:
                 jsonl_file.write(json.dumps(record) + "\n")
                 jsonl_file.flush()
                 match_count += 1
+
+            clipper.scan_for_matches(
+                detector, skip_frames=args.skip_frames, region=region,
+                batch_size=args.batch_size, collect_stats=args.stats,
+                on_match=write_match,
+            )
 
     completed_at = datetime.now(timezone.utc)
     metadata = {

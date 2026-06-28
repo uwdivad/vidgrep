@@ -58,6 +58,8 @@ python main.py <input> (--text PATTERN | --template IMAGE) [options]
 | `--output PATH` | `<stem>_clip[_N]<ext>` | Output file path |
 | `--padding SEC` | `5.0` | Seconds to include before and after each match |
 | `--skip-frames N` | `3` | Sample every Nth frame (higher = faster scan) |
+| `--batch-size N` | `8` | Frames per OCR batch (higher = better GPU utilisation, more VRAM) |
+| `--stats` | — | Print decode/detect throughput (fps, ×-realtime) after each scan |
 | `--threshold 0-1` | `0.5` | Min OCR confidence or template similarity to count as a match |
 | `--region X Y W H` | — | Crop each frame to this rectangle before scanning |
 | `--merge-gap SEC` | `2.0` | Merge match windows separated by less than this |
@@ -90,3 +92,46 @@ python main.py movie.mp4 --text "Chapter" --concat --lossless
 # Fast scan of a long video on CPU only
 python main.py long.mp4 --text "error" --skip-frames 10 --merge-gap 5 --no-gpu
 ```
+
+## Troubleshooting
+
+### OCR is running on the CPU even though I have a GPU
+
+**Symptom.** Scanning is slow and you see a warning like:
+
+```
+'pin_memory' argument is set as true but no accelerator is found, then device pinned memory won't be used.
+```
+
+This means PyTorch can't see your GPU (`torch.cuda.is_available()` is `False`), so EasyOCR silently falls back to the CPU. The tool also prints its own warning at model load when this happens:
+
+```
+WARNING: GPU requested but CUDA is unavailable — running OCR on CPU (much slower). …
+```
+
+**Confirm it.** With your virtualenv activated:
+
+```bash
+python -c "import torch; print(torch.__version__); print('cuda avail:', torch.cuda.is_available()); print('cuda build:', torch.version.cuda)"
+```
+
+A version ending in `+cpu` and `cuda avail: False` means the **CPU-only** PyTorch wheel got installed.
+
+**Fix.** Reinstall the CUDA build (the **cu128** wheel — required for RTX 50-series / Blackwell GPUs; older `cu121`/`cu118` wheels don't include the `sm_120` architecture and won't drive a 5090):
+
+```bash
+pip uninstall -y torch torchvision
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+```
+
+Re-run the confirm command — you want `cuda avail: True` and `cuda build: 12.8`. Order matters: install CUDA-enabled PyTorch **before** EasyOCR, since EasyOCR binds to whatever torch build is present at import time.
+
+### Checking GPU utilisation during a scan
+
+Run a scan with `--stats` to get an app-level throughput number (decode fps, detect fps, ×-realtime). To watch the GPU live:
+
+- `nvidia-smi dmon -s u` — watch the `dec` column (non-zero = hardware decode active) and `sm` (compute load).
+- [`nvitop`](https://github.com/XuehaiPan/nvitop) (`pip install nvitop`) — interactive per-process GPU/VRAM graphs.
+- **Windows Task Manager** → Performance → GPU: switch a graph to **CUDA** and watch the **Video Decode** pane.
+
+If GPU compute stays low while a CPU core is pegged, the GPU is starved — raise `--batch-size`, add `--region` to shrink the OCR area, or increase `--skip-frames`.

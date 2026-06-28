@@ -9,7 +9,10 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=_USAGE,
     )
 
-    p.add_argument("input", help="Input video file")
+    p.add_argument(
+        "input",
+        help="Input video file, or a directory (searched recursively for videos)",
+    )
 
     det = p.add_mutually_exclusive_group(required=True)
     det.add_argument(
@@ -32,6 +35,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--skip-frames", "-s", type=int, default=3, metavar="N",
         help="Analyse every Nth frame – higher = faster scan (default: 3)",
+    )
+    p.add_argument(
+        "--batch-size", "-b", type=int, default=8, metavar="N",
+        help="Frames per OCR batch – higher = better GPU utilisation, more VRAM (default: 8)",
+    )
+    p.add_argument(
+        "--stats", action="store_true",
+        help="Print decode/detect throughput (fps, x-realtime) after each scan",
     )
     p.add_argument(
         "--threshold", type=float, default=0.5, metavar="0-1",
@@ -103,6 +114,14 @@ def build_scan_parser() -> argparse.ArgumentParser:
         help="Analyse every Nth frame (default: 3)",
     )
     p.add_argument(
+        "--batch-size", "-b", type=int, default=8, metavar="N",
+        help="Frames per OCR batch – higher = better GPU utilisation, more VRAM (default: 8)",
+    )
+    p.add_argument(
+        "--stats", action="store_true",
+        help="Print decode/detect throughput (fps, x-realtime) after each scan",
+    )
+    p.add_argument(
         "--threshold", type=float, default=0.5, metavar="0-1",
         help="Min OCR confidence to count as a match (default: 0.5)",
     )
@@ -146,6 +165,9 @@ Usage examples
 
   # Template (image) matching instead of OCR
   python main.py gameplay.mp4 --template logo.png --threshold 0.85
+
+  # Process every video in a directory (recursive); clips land next to each source
+  python main.py /sports/videos/ --text "GOAL"
 
   # Multiple hits concatenated into one file, re-encoded with NVENC
   python main.py movie.mp4 --text "Chapter" --concat --reencode

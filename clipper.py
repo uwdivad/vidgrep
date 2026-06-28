@@ -2,8 +2,9 @@
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -20,6 +21,7 @@ class _SWCapture:
     def __init__(self, path: str, w: int, h: int):
         self._frame_size = w * h * 3
         self._shape = (h, w, 3)
+        self._buf: Optional[bytes] = None
         self._proc = subprocess.Popen(
             [
                 "ffmpeg", "-hwaccel", "none",
@@ -32,11 +34,21 @@ class _SWCapture:
             stderr=subprocess.DEVNULL,
         )
 
-    def read(self) -> Tuple[bool, Optional[np.ndarray]]:
-        raw = self._proc.stdout.read(self._frame_size)
-        if len(raw) < self._frame_size:
+    def grab(self) -> bool:
+        """Advance to the next frame without decoding it into an array."""
+        self._buf = self._proc.stdout.read(self._frame_size)
+        return len(self._buf) == self._frame_size
+
+    def retrieve(self) -> Tuple[bool, Optional[np.ndarray]]:
+        """Decode the most recently grabbed frame into a BGR array."""
+        if self._buf is None or len(self._buf) < self._frame_size:
             return False, None
-        return True, np.frombuffer(raw, dtype=np.uint8).reshape(self._shape).copy()
+        return True, np.frombuffer(self._buf, dtype=np.uint8).reshape(self._shape).copy()
+
+    def read(self) -> Tuple[bool, Optional[np.ndarray]]:
+        if not self.grab():
+            return False, None
+        return self.retrieve()
 
     def release(self):
         self._proc.stdout.close()
@@ -82,53 +94,83 @@ class VideoClipper:
         region: Optional[Tuple[int, int, int, int]] = None,
         merge_gap: float = 2.0,
         min_duration: float = 0.0,
+        batch_size: int = 8,
+        collect_stats: bool = False,
     ) -> List[Tuple[float, float]]:
         """
         Scan the video and return (start_sec, end_sec) intervals where the
         detector fires.  Nearby intervals separated by < merge_gap seconds
         are merged into one.  Intervals shorter than min_duration are dropped.
+
+        Frames that are skipped (not on a ``skip_frames`` boundary) are advanced
+        with ``grab()`` instead of being fully decoded, and sampled frames are
+        run through the detector in batches of ``batch_size`` to keep the GPU fed.
         """
         cap = self._open_reader()
         intervals: List[Tuple[float, float]] = []
 
         interval_start: Optional[float] = None
         match_end: Optional[float] = None
+
+        def _record(t: float, matched: bool) -> None:
+            nonlocal interval_start, match_end
+            if matched:
+                if interval_start is None:
+                    interval_start = t
+                match_end = t
+            elif interval_start is not None and (t - match_end) > merge_gap:
+                if match_end - interval_start >= min_duration:
+                    intervals.append((interval_start, match_end))
+                interval_start = None
+                match_end = None
+
+        batch_frames: List[np.ndarray] = []
+        batch_times: List[float] = []
+
+        def _flush() -> None:
+            if not batch_frames:
+                return
+            for t, matched in zip(batch_times, detector.detect_batch(batch_frames)):
+                _record(t, matched)
+            batch_frames.clear()
+            batch_times.clear()
+
+        started = time.perf_counter()
+        sampled = 0
         frame_idx = 0
 
         with tqdm(total=self.frame_count, unit="fr", dynamic_ncols=True,
                   bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]") as bar:
             while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-
                 if frame_idx % skip_frames == 0:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
                     if region:
                         x, y, w, h = region
                         crop = frame[y:y + h, x:x + w]
                     else:
                         crop = frame
-
-                    t = frame_idx / self.fps
-                    matched = detector.detect(crop)
-
-                    if matched:
-                        if interval_start is None:
-                            interval_start = t
-                        match_end = t
-                    elif interval_start is not None and (t - match_end) > merge_gap:
-                        if match_end - interval_start >= min_duration:
-                            intervals.append((interval_start, match_end))
-                        interval_start = None
-                        match_end = None
+                    batch_frames.append(crop)
+                    batch_times.append(frame_idx / self.fps)
+                    sampled += 1
+                    if len(batch_frames) >= batch_size:
+                        _flush()
+                else:
+                    if not cap.grab():
+                        break
 
                 frame_idx += 1
                 bar.update(1)
 
+        _flush()
         cap.release()
 
         if interval_start is not None and match_end - interval_start >= min_duration:
             intervals.append((interval_start, match_end))
+
+        if collect_stats:
+            self._print_stats(frame_idx, sampled, time.perf_counter() - started)
 
         return intervals
 
@@ -139,39 +181,87 @@ class VideoClipper:
         *,
         skip_frames: int = 3,
         region: Optional[Tuple[int, int, int, int]] = None,
+        batch_size: int = 8,
+        collect_stats: bool = False,
+        on_match: Optional[Callable[[dict], None]] = None,
     ) -> List[dict]:
         """
         Iterate frames and return one dict per matched text region per frame:
         {"timestamp": float, "text": str, "confidence": float}
+
+        If ``on_match`` is given it is called with each match dict the moment
+        the batch containing it is processed, so callers can stream results to
+        disk instead of waiting for the whole video to finish.
         """
         cap = self._open_reader()
         matches: List[dict] = []
+
+        batch_frames: List[np.ndarray] = []
+        batch_times: List[float] = []
+
+        def _flush() -> None:
+            if not batch_frames:
+                return
+            for t, found in zip(batch_times, detector.detect_matches_batch(batch_frames)):
+                for m in found:
+                    record = {
+                        "timestamp": t,
+                        "text": m["text"],
+                        "confidence": round(m["confidence"], 4),
+                    }
+                    matches.append(record)
+                    if on_match is not None:
+                        on_match(record)
+            batch_frames.clear()
+            batch_times.clear()
+
+        started = time.perf_counter()
+        sampled = 0
         frame_idx = 0
 
         with tqdm(total=self.frame_count, unit="fr", dynamic_ncols=True,
                   bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]") as bar:
             while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
                 if frame_idx % skip_frames == 0:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
                     if region:
                         x, y, w, h = region
                         crop = frame[y:y + h, x:x + w]
                     else:
                         crop = frame
-                    t = round(frame_idx / self.fps, 3)
-                    for m in detector.detect_matches(crop):
-                        matches.append({
-                            "timestamp": t,
-                            "text": m["text"],
-                            "confidence": round(m["confidence"], 4),
-                        })
+                    batch_frames.append(crop)
+                    batch_times.append(round(frame_idx / self.fps, 3))
+                    sampled += 1
+                    if len(batch_frames) >= batch_size:
+                        _flush()
+                else:
+                    if not cap.grab():
+                        break
                 frame_idx += 1
                 bar.update(1)
 
+        _flush()
         cap.release()
+
+        if collect_stats:
+            self._print_stats(frame_idx, sampled, time.perf_counter() - started)
+
         return matches
+
+    def _print_stats(self, frames: int, sampled: int, elapsed: float) -> None:
+        if elapsed <= 0:
+            return
+        decode_fps = frames / elapsed
+        ocr_fps = sampled / elapsed
+        realtime = decode_fps / self.fps if self.fps else 0.0
+        print(
+            f"\n[stats] {frames:,} frames ({sampled:,} analysed) in {elapsed:.1f}s  |  "
+            f"decode {decode_fps:.1f} fps  |  detect {ocr_fps:.1f} fps  |  "
+            f"{realtime:.2f}x realtime",
+            flush=True,
+        )
 
     # ------------------------------------------------------------------
     def extract_clips(

@@ -15,7 +15,23 @@ def main():
 
     input_path = Path(args.input)
     if not input_path.exists():
-        sys.exit(f"Error: file not found: {input_path}")
+        sys.exit(f"Error: not found: {input_path}")
+
+    from scan import find_video_files
+
+    try:
+        video_files = find_video_files(input_path)
+    except FileNotFoundError as exc:
+        sys.exit(f"Error: {exc}")
+
+    if not video_files:
+        sys.exit(f"Error: no valid video files found at '{input_path}'")
+
+    if input_path.is_dir() and args.output:
+        sys.exit(
+            "Error: --output is not allowed when input is a directory "
+            "(clips are named per-file next to each source)."
+        )
 
     from detector import TextDetector, TemplateDetector
     from clipper import VideoClipper
@@ -37,36 +53,52 @@ def main():
             threshold=args.threshold,
         )
 
-    clipper = VideoClipper(str(input_path))
-
-    print(f"\nScanning '{input_path.name}' …")
     region = tuple(args.region) if args.region else None
-    intervals = clipper.find_intervals(
-        detector,
-        skip_frames=args.skip_frames,
-        region=region,
-        merge_gap=args.merge_gap,
-        min_duration=args.min_duration,
-    )
+    multiple = len(video_files) > 1
+    if multiple:
+        print(f"Found {len(video_files)} video file(s) to process.")
 
-    if not intervals:
-        sys.exit("\nNo matches found.")
+    saved_paths: list[str] = []
+    for video_path in video_files:
+        print(f"\nScanning '{video_path.name}' …")
+        try:
+            clipper = VideoClipper(str(video_path))
+        except ValueError as exc:
+            print(f"Warning: skipping '{video_path}': {exc}", file=sys.stderr)
+            continue
 
-    print(f"\nFound {len(intervals)} interval(s):")
-    for i, (s, e) in enumerate(intervals, 1):
-        print(f"  [{i}]  {s:.2f}s – {e:.2f}s  (match duration: {e - s:.2f}s)")
+        intervals = clipper.find_intervals(
+            detector,
+            skip_frames=args.skip_frames,
+            region=region,
+            merge_gap=args.merge_gap,
+            min_duration=args.min_duration,
+            batch_size=args.batch_size,
+            collect_stats=args.stats,
+        )
 
-    output_paths = clipper.extract_clips(
-        intervals,
-        padding=args.padding,
-        output=args.output,
-        reencode=args.reencode or args.lossless,
-        lossless=args.lossless,
-        concat=args.concat,
-    )
+        if not intervals:
+            print("No matches found.")
+            continue
+
+        print(f"\nFound {len(intervals)} interval(s):")
+        for i, (s, e) in enumerate(intervals, 1):
+            print(f"  [{i}]  {s:.2f}s – {e:.2f}s  (match duration: {e - s:.2f}s)")
+
+        output_paths = clipper.extract_clips(
+            intervals,
+            padding=args.padding,
+            output=args.output,
+            reencode=args.reencode or args.lossless,
+            lossless=args.lossless,
+            concat=args.concat,
+        )
+        saved_paths.extend(output_paths)
 
     print()
-    for path in output_paths:
+    if not saved_paths:
+        sys.exit("No clips written — no matches in any input.")
+    for path in saved_paths:
         print(f"Saved: {path}")
 
 
