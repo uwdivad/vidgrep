@@ -37,6 +37,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Analyse every Nth frame – higher = faster scan (default: 3)",
     )
     p.add_argument(
+        "--interval", "-i", type=float, metavar="SEC",
+        help=(
+            "Analyse one frame every SEC seconds instead of every Nth frame. "
+            "Frame-rate independent and far faster for long videos "
+            "(overrides --skip-frames)."
+        ),
+    )
+    p.add_argument(
         "--batch-size", "-b", type=int, default=8, metavar="N",
         help="Frames per OCR batch – higher = better GPU utilisation, more VRAM (default: 8)",
     )
@@ -114,6 +122,13 @@ def build_scan_parser() -> argparse.ArgumentParser:
         help="Analyse every Nth frame (default: 3)",
     )
     p.add_argument(
+        "--interval", "-i", type=float, metavar="SEC",
+        help=(
+            "Analyse one frame every SEC seconds instead of every Nth frame "
+            "(frame-rate independent; overrides --skip-frames)."
+        ),
+    )
+    p.add_argument(
         "--batch-size", "-b", type=int, default=8, metavar="N",
         help="Frames per OCR batch – higher = better GPU utilisation, more VRAM (default: 8)",
     )
@@ -151,6 +166,9 @@ Usage examples
 
   # Mix files and directories, restrict to a region of the frame
   python main.py scan game1.mp4 /archive/ --text "SCORE" --region 0 810 1440 270
+
+  # Sample one frame every 2 s instead of every Nth frame
+  python main.py scan game1.mp4 --text "GOAL" --interval 2
 """
 
 
@@ -174,4 +192,7 @@ Usage examples
 
   # Faster scan: process every 5th frame, merge gaps ≤ 3 s, disable GPU
   python main.py long.mp4 --text "error" --skip-frames 5 --merge-gap 3 --no-gpu
+
+  # Sample one frame every 2 s (frame-rate independent, much faster on long videos)
+  python main.py long.mp4 --text "error" --interval 2
 """

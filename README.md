@@ -9,7 +9,7 @@ python main.py gameplay.mp4 --template logo.png
 
 ## How it works
 
-1. Scans every Nth frame of the video (default: every 3rd)
+1. Scans every Nth frame of the video (default: every 3rd) — or one frame every N seconds with `--interval`
 2. Runs OCR or template matching on each sampled frame
 3. Merges nearby hit windows into intervals
 4. Extracts a padded clip for each interval via FFmpeg
@@ -58,6 +58,7 @@ python main.py <input> (--text PATTERN | --template IMAGE) [options]
 | `--output PATH` | `<stem>_clip[_N]<ext>` | Output file path |
 | `--padding SEC` | `5.0` | Seconds to include before and after each match |
 | `--skip-frames N` | `3` | Sample every Nth frame (higher = faster scan) |
+| `--interval SEC` | — | Sample one frame every SEC seconds (frame-rate independent; overrides `--skip-frames`). Much faster on long videos |
 | `--batch-size N` | `8` | Frames per OCR batch (higher = better GPU utilisation, more VRAM) |
 | `--stats` | — | Print decode/detect throughput (fps, ×-realtime) after each scan |
 | `--threshold 0-1` | `0.5` | Min OCR confidence or template similarity to count as a match |
@@ -91,6 +92,9 @@ python main.py movie.mp4 --text "Chapter" --concat --lossless
 
 # Fast scan of a long video on CPU only
 python main.py long.mp4 --text "error" --skip-frames 10 --merge-gap 5 --no-gpu
+
+# Sample one frame every 2 s — frame-rate independent, big speedup on long videos
+python main.py long.mp4 --text "error" --interval 2
 ```
 
 ## Troubleshooting
@@ -134,4 +138,4 @@ Run a scan with `--stats` to get an app-level throughput number (decode fps, det
 - [`nvitop`](https://github.com/XuehaiPan/nvitop) (`pip install nvitop`) — interactive per-process GPU/VRAM graphs.
 - **Windows Task Manager** → Performance → GPU: switch a graph to **CUDA** and watch the **Video Decode** pane.
 
-If GPU compute stays low while a CPU core is pegged, the GPU is starved — raise `--batch-size`, add `--region` to shrink the OCR area, or increase `--skip-frames`.
+If GPU compute stays low while a CPU core is pegged, the GPU is starved — raise `--batch-size`, add `--region` to shrink the OCR area, or sample fewer frames with `--skip-frames` / `--interval`.

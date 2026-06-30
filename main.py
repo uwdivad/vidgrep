@@ -67,9 +67,18 @@ def main():
             print(f"Warning: skipping '{video_path}': {exc}", file=sys.stderr)
             continue
 
+        if args.interval:
+            skip_frames = max(1, round(args.interval * clipper.fps))
+            print(
+                f"Sampling 1 frame every {args.interval:g}s "
+                f"(every {skip_frames} frames at {clipper.fps:.2f} fps)."
+            )
+        else:
+            skip_frames = args.skip_frames
+
         intervals = clipper.find_intervals(
             detector,
-            skip_frames=args.skip_frames,
+            skip_frames=skip_frames,
             region=region,
             merge_gap=args.merge_gap,
             min_duration=args.min_duration,

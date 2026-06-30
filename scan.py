@@ -101,8 +101,17 @@ def run_scan(args) -> None:
                 jsonl_file.flush()
                 match_count += 1
 
+            if args.interval:
+                skip_frames = max(1, round(args.interval * clipper.fps))
+                print(
+                    f"Sampling 1 frame every {args.interval:g}s "
+                    f"(every {skip_frames} frames at {clipper.fps:.2f} fps)."
+                )
+            else:
+                skip_frames = args.skip_frames
+
             clipper.scan_for_matches(
-                detector, skip_frames=args.skip_frames, region=region,
+                detector, skip_frames=skip_frames, region=region,
                 batch_size=args.batch_size, collect_stats=args.stats,
                 on_match=write_match,
             )
@@ -118,6 +127,7 @@ def run_scan(args) -> None:
         "options": {
             "threshold": args.threshold,
             "skip_frames": args.skip_frames,
+            "interval": args.interval,
             "region": list(args.region) if args.region else None,
             "lang": args.lang,
         },
