@@ -55,6 +55,74 @@ class _SWCapture:
         self._proc.wait()
 
 
+class _FFSampler:
+    """
+    Frame reader that lets FFmpeg do the sampling: only every Nth frame is
+    decoded out of the pipe, optionally cropped to a region first.  Skipped
+    frames never cross the process boundary, so the per-frame decode/pipe
+    cost that dominates sparse scans (large --interval / --skip-frames)
+    disappears.
+    """
+
+    def __init__(
+        self,
+        path: str,
+        skip_frames: int,
+        w: int,
+        h: int,
+        region: Optional[Tuple[int, int, int, int]] = None,
+    ):
+        vf = f"select=not(mod(n\\,{skip_frames}))"
+        if region:
+            # Clamp like numpy slicing does so out-of-range regions don't
+            # make the crop filter abort.
+            x, y, rw, rh = region
+            x = max(0, min(x, w - 1))
+            y = max(0, min(y, h - 1))
+            rw = max(1, min(rw, w - x))
+            rh = max(1, min(rh, h - y))
+            vf += f",crop={rw}:{rh}:{x}:{y}"
+            out_w, out_h = rw, rh
+        else:
+            out_w, out_h = w, h
+
+        self._frame_size = out_w * out_h * 3
+        self._shape = (out_h, out_w, 3)
+        self._proc = subprocess.Popen(
+            [
+                "ffmpeg", "-nostdin",
+                "-i", path,
+                "-vf", vf,
+                "-fps_mode", "vfr",
+                "-an",
+                "-f", "rawvideo", "-pix_fmt", "bgr24",
+                "-loglevel", "error",
+                "pipe:1",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        # Pre-read frame 0 so a rejected filter chain / unsupported flag on
+        # an old FFmpeg build fails here, where callers can still fall back.
+        self._pending: Optional[bytes] = self._proc.stdout.read(self._frame_size)
+        if self._pending is None or len(self._pending) < self._frame_size:
+            self.release()
+            raise RuntimeError("FFmpeg sampler produced no frames")
+
+    def read(self) -> Tuple[bool, Optional[np.ndarray]]:
+        buf = self._pending
+        self._pending = None
+        if buf is None:
+            buf = self._proc.stdout.read(self._frame_size)
+        if not buf or len(buf) < self._frame_size:
+            return False, None
+        return True, np.frombuffer(buf, dtype=np.uint8).reshape(self._shape).copy()
+
+    def release(self):
+        self._proc.stdout.close()
+        self._proc.wait()
+
+
 class VideoClipper:
     def __init__(self, path: str):
         self.path = path
@@ -85,6 +153,57 @@ class VideoClipper:
             return cv2.VideoCapture(self.path, cv2.CAP_FFMPEG)
         return _SWCapture(self.path, self._w, self._h)
 
+    def _iter_samples(self, skip_frames: int, region: Optional[Tuple[int, int, int, int]]):
+        """Yield (timestamp_sec, frame) for every ``skip_frames``-th frame.
+
+        Prefers an FFmpeg-side sampler (skipped frames are dropped inside
+        FFmpeg and never piped or converted); falls back to in-process
+        decoding with grab() past skipped frames if that isn't available.
+        """
+        sampler = None
+        if skip_frames > 1:
+            try:
+                sampler = _FFSampler(self.path, skip_frames, self._w, self._h, region)
+            except (OSError, RuntimeError):
+                print("FFmpeg frame sampler unavailable — decoding every frame…", flush=True)
+
+        expected = self.frame_count // skip_frames + 1
+        with tqdm(total=expected, unit="fr", dynamic_ncols=True,
+                  bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]") as bar:
+            if sampler is not None:
+                try:
+                    idx = 0
+                    while True:
+                        ret, frame = sampler.read()
+                        if not ret:
+                            break
+                        yield (idx * skip_frames) / self.fps, frame
+                        idx += 1
+                        bar.update(1)
+                finally:
+                    sampler.release()
+                return
+
+            cap = self._open_reader()
+            try:
+                frame_idx = 0
+                while True:
+                    if frame_idx % skip_frames == 0:
+                        ret, frame = cap.read()
+                        if not ret:
+                            break
+                        if region:
+                            x, y, w, h = region
+                            frame = frame[y:y + h, x:x + w]
+                        yield frame_idx / self.fps, frame
+                        bar.update(1)
+                    else:
+                        if not cap.grab():
+                            break
+                    frame_idx += 1
+            finally:
+                cap.release()
+
     # ------------------------------------------------------------------
     def find_intervals(
         self,
@@ -102,11 +221,10 @@ class VideoClipper:
         detector fires.  Nearby intervals separated by < merge_gap seconds
         are merged into one.  Intervals shorter than min_duration are dropped.
 
-        Frames that are skipped (not on a ``skip_frames`` boundary) are advanced
-        with ``grab()`` instead of being fully decoded, and sampled frames are
-        run through the detector in batches of ``batch_size`` to keep the GPU fed.
+        Sampling and region cropping happen inside FFmpeg where possible (see
+        ``_iter_samples``), and sampled frames are run through the detector in
+        batches of ``batch_size`` to keep the GPU fed.
         """
-        cap = self._open_reader()
         intervals: List[Tuple[float, float]] = []
 
         interval_start: Optional[float] = None
@@ -137,40 +255,22 @@ class VideoClipper:
 
         started = time.perf_counter()
         sampled = 0
-        frame_idx = 0
 
-        with tqdm(total=self.frame_count, unit="fr", dynamic_ncols=True,
-                  bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]") as bar:
-            while True:
-                if frame_idx % skip_frames == 0:
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-                    if region:
-                        x, y, w, h = region
-                        crop = frame[y:y + h, x:x + w]
-                    else:
-                        crop = frame
-                    batch_frames.append(crop)
-                    batch_times.append(frame_idx / self.fps)
-                    sampled += 1
-                    if len(batch_frames) >= batch_size:
-                        _flush()
-                else:
-                    if not cap.grab():
-                        break
-
-                frame_idx += 1
-                bar.update(1)
+        for t, crop in self._iter_samples(skip_frames, region):
+            batch_frames.append(crop)
+            batch_times.append(t)
+            sampled += 1
+            if len(batch_frames) >= batch_size:
+                _flush()
 
         _flush()
-        cap.release()
 
         if interval_start is not None and match_end - interval_start >= min_duration:
             intervals.append((interval_start, match_end))
 
         if collect_stats:
-            self._print_stats(frame_idx, sampled, time.perf_counter() - started)
+            frames_covered = min(sampled * skip_frames, self.frame_count)
+            self._print_stats(frames_covered, sampled, time.perf_counter() - started)
 
         return intervals
 
@@ -193,7 +293,6 @@ class VideoClipper:
         the batch containing it is processed, so callers can stream results to
         disk instead of waiting for the whole video to finish.
         """
-        cap = self._open_reader()
         matches: List[dict] = []
 
         batch_frames: List[np.ndarray] = []
@@ -217,36 +316,19 @@ class VideoClipper:
 
         started = time.perf_counter()
         sampled = 0
-        frame_idx = 0
 
-        with tqdm(total=self.frame_count, unit="fr", dynamic_ncols=True,
-                  bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]") as bar:
-            while True:
-                if frame_idx % skip_frames == 0:
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-                    if region:
-                        x, y, w, h = region
-                        crop = frame[y:y + h, x:x + w]
-                    else:
-                        crop = frame
-                    batch_frames.append(crop)
-                    batch_times.append(round(frame_idx / self.fps, 3))
-                    sampled += 1
-                    if len(batch_frames) >= batch_size:
-                        _flush()
-                else:
-                    if not cap.grab():
-                        break
-                frame_idx += 1
-                bar.update(1)
+        for t, crop in self._iter_samples(skip_frames, region):
+            batch_frames.append(crop)
+            batch_times.append(round(t, 3))
+            sampled += 1
+            if len(batch_frames) >= batch_size:
+                _flush()
 
         _flush()
-        cap.release()
 
         if collect_stats:
-            self._print_stats(frame_idx, sampled, time.perf_counter() - started)
+            frames_covered = min(sampled * skip_frames, self.frame_count)
+            self._print_stats(frames_covered, sampled, time.perf_counter() - started)
 
         return matches
 

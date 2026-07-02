@@ -42,14 +42,14 @@ Three modules, no framework:
   - `TemplateDetector`: normalised cross-correlation via OpenCV. Tries `cv2.cuda` on init and silently falls back to CPU.
 
 - **`clipper.py`** — `VideoClipper` owns all video I/O:
-  - `find_intervals()` iterates frames (skipping every Nth), applies the detector, and merges nearby hit windows.
-  - Frame reading normally uses `cv2.VideoCapture(path, cv2.CAP_FFMPEG)`; if hardware decoding fails on init, it falls back to `_SWCapture`, which pipes raw BGR from an `ffmpeg` subprocess.
+  - `find_intervals()` iterates sampled frames, applies the detector, and merges nearby hit windows.
+  - Frame sampling goes through `_iter_samples()`: when `skip_frames > 1` it uses `_FFSampler`, an `ffmpeg` subprocess with `select`+`crop` filters so skipped frames are dropped (and the region cropped) inside FFmpeg — only sampled crops cross the pipe. If that fails (e.g. old FFmpeg), it falls back to in-process decoding via `cv2.VideoCapture(path, cv2.CAP_FFMPEG)` or `_SWCapture` (raw BGR piped from `ffmpeg`) when hardware decoding fails on init.
   - `extract_clips()` calls FFmpeg for each interval. Default is stream-copy (fast, keyframe-accurate). `--reencode` uses NVENC (codec auto-detected from the source stream); `--lossless` uses `libx264 -crf 0`.
 
 ## Key behaviours to be aware of
 
 - **Stream-copy cuts snap to keyframes** (~2 s inaccuracy). Use `--lossless` or `--reencode` for frame-accurate output.
 - **OCR model loads lazily** on the first `detect()` call, so startup is fast but the first scanned frame is slow.
-- `--skip-frames N` (default 3) skips N-1 frames between detections — the main performance lever for long videos.
-- `--region X Y W H` crops frames before OCR, which dramatically speeds up text detection on large frames.
+- `--skip-frames N` (default 3) / `--interval SEC` are the main performance levers. When sampling (N > 1), frame dropping and `--region` cropping happen inside the FFmpeg subprocess (`_FFSampler`), so skipped frames cost almost nothing — sparse scans are bounded by FFmpeg decode speed plus OCR of the sampled frames only.
+- `--region X Y W H` crops frames before OCR (inside FFmpeg on the sampled path), which dramatically speeds up text detection on large frames.
 - `--concat` writes per-interval clips to `tempfile` paths and then concatenates with `ffmpeg -f concat`, deleting the temps afterwards.

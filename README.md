@@ -9,7 +9,7 @@ python main.py gameplay.mp4 --template logo.png
 
 ## How it works
 
-1. Scans every Nth frame of the video (default: every 3rd) — or one frame every N seconds with `--interval`
+1. Samples every Nth frame of the video (default: every 3rd) — or one frame every N seconds with `--interval`. Sampling and `--region` cropping run inside FFmpeg, so skipped frames are nearly free
 2. Runs OCR or template matching on each sampled frame
 3. Merges nearby hit windows into intervals
 4. Extracts a padded clip for each interval via FFmpeg
