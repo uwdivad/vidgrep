@@ -124,8 +124,9 @@ class _FFSampler:
 
 
 class VideoClipper:
-    def __init__(self, path: str):
+    def __init__(self, path: str, *, log: Optional[Callable[[str], None]] = None):
         self.path = path
+        self._log = log
 
         cap = cv2.VideoCapture(path, cv2.CAP_FFMPEG)
         if not cap.isOpened():
@@ -141,19 +142,32 @@ class VideoClipper:
         cap.release()
         self._hw_ok = ret
         if not ret:
-            print("Hardware decoding unavailable, will use software decoder…", flush=True)
+            self._emit("Hardware decoding unavailable, will use software decoder…")
 
-        print(
+        self._emit(
             f"Video: {self._w}x{self._h} @ {self.fps:.2f} fps  |  "
             f"{self.duration:.1f}s  |  {self.frame_count:,} frames"
         )
+
+    def _emit(self, message: str) -> None:
+        if self._log is not None:
+            self._log(message)
+        else:
+            print(message, flush=True)
 
     def _open_reader(self):
         if self._hw_ok:
             return cv2.VideoCapture(self.path, cv2.CAP_FFMPEG)
         return _SWCapture(self.path, self._w, self._h)
 
-    def _iter_samples(self, skip_frames: int, region: Optional[Tuple[int, int, int, int]]):
+    def _iter_samples(
+        self,
+        skip_frames: int,
+        region: Optional[Tuple[int, int, int, int]],
+        *,
+        show_progress: bool = True,
+        on_progress: Optional[Callable[[int, int], None]] = None,
+    ):
         """Yield (timestamp_sec, frame) for every ``skip_frames``-th frame.
 
         Prefers an FFmpeg-side sampler (skipped frames are dropped inside
@@ -165,28 +179,36 @@ class VideoClipper:
             try:
                 sampler = _FFSampler(self.path, skip_frames, self._w, self._h, region)
             except (OSError, RuntimeError):
-                print("FFmpeg frame sampler unavailable — decoding every frame…", flush=True)
+                self._emit("FFmpeg frame sampler unavailable — decoding every frame…")
 
         expected = self.frame_count // skip_frames + 1
-        with tqdm(total=expected, unit="fr", dynamic_ncols=True,
-                  bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]") as bar:
+        bar = None
+        if show_progress:
+            bar = tqdm(total=expected, unit="fr", dynamic_ncols=True,
+                       bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
+
+        def _advance(sampled: int) -> None:
+            if bar is not None:
+                bar.update(1)
+            if on_progress is not None:
+                on_progress(sampled, expected)
+
+        try:
             if sampler is not None:
-                try:
-                    idx = 0
-                    while True:
-                        ret, frame = sampler.read()
-                        if not ret:
-                            break
-                        yield (idx * skip_frames) / self.fps, frame
-                        idx += 1
-                        bar.update(1)
-                finally:
-                    sampler.release()
+                idx = 0
+                while True:
+                    ret, frame = sampler.read()
+                    if not ret:
+                        break
+                    yield (idx * skip_frames) / self.fps, frame
+                    idx += 1
+                    _advance(idx)
                 return
 
             cap = self._open_reader()
             try:
                 frame_idx = 0
+                sampled = 0
                 while True:
                     if frame_idx % skip_frames == 0:
                         ret, frame = cap.read()
@@ -196,13 +218,19 @@ class VideoClipper:
                             x, y, w, h = region
                             frame = frame[y:y + h, x:x + w]
                         yield frame_idx / self.fps, frame
-                        bar.update(1)
+                        sampled += 1
+                        _advance(sampled)
                     else:
                         if not cap.grab():
                             break
                     frame_idx += 1
             finally:
                 cap.release()
+        finally:
+            if sampler is not None:
+                sampler.release()
+            if bar is not None:
+                bar.close()
 
     # ------------------------------------------------------------------
     def find_intervals(
@@ -215,6 +243,8 @@ class VideoClipper:
         min_duration: float = 0.0,
         batch_size: int = 8,
         collect_stats: bool = False,
+        show_progress: bool = True,
+        on_progress: Optional[Callable[[int, int], None]] = None,
     ) -> List[Tuple[float, float]]:
         """
         Scan the video and return (start_sec, end_sec) intervals where the
@@ -256,7 +286,9 @@ class VideoClipper:
         started = time.perf_counter()
         sampled = 0
 
-        for t, crop in self._iter_samples(skip_frames, region):
+        for t, crop in self._iter_samples(
+            skip_frames, region, show_progress=show_progress, on_progress=on_progress
+        ):
             batch_frames.append(crop)
             batch_times.append(t)
             sampled += 1
@@ -284,6 +316,8 @@ class VideoClipper:
         batch_size: int = 8,
         collect_stats: bool = False,
         on_match: Optional[Callable[[dict], None]] = None,
+        show_progress: bool = True,
+        on_progress: Optional[Callable[[int, int], None]] = None,
     ) -> List[dict]:
         """
         Iterate frames and return one dict per matched text region per frame:
@@ -317,7 +351,9 @@ class VideoClipper:
         started = time.perf_counter()
         sampled = 0
 
-        for t, crop in self._iter_samples(skip_frames, region):
+        for t, crop in self._iter_samples(
+            skip_frames, region, show_progress=show_progress, on_progress=on_progress
+        ):
             batch_frames.append(crop)
             batch_times.append(round(t, 3))
             sampled += 1
@@ -338,11 +374,10 @@ class VideoClipper:
         decode_fps = frames / elapsed
         ocr_fps = sampled / elapsed
         realtime = decode_fps / self.fps if self.fps else 0.0
-        print(
+        self._emit(
             f"\n[stats] {frames:,} frames ({sampled:,} analysed) in {elapsed:.1f}s  |  "
             f"decode {decode_fps:.1f} fps  |  detect {ocr_fps:.1f} fps  |  "
-            f"{realtime:.2f}x realtime",
-            flush=True,
+            f"{realtime:.2f}x realtime"
         )
 
     # ------------------------------------------------------------------
@@ -379,13 +414,13 @@ class VideoClipper:
                 else:
                     out = str(src.parent / f"{src.stem}_clip_{i}{ext}")
 
-            print(f"\n[{i}/{len(intervals)}] {t0:.2f}s – {t1:.2f}s  →  {out}")
+            self._emit(f"\n[{i}/{len(intervals)}] {t0:.2f}s – {t1:.2f}s  →  {out}")
             self._ffmpeg_clip(t0, t1, out, reencode, lossless)
             clip_paths.append(out)
 
         if concat and len(intervals) > 1:
             final = output or str(src.parent / f"{src.stem}_clips{ext}")
-            print(f"\nConcatenating {len(clip_paths)} clips  →  {final}")
+            self._emit(f"\nConcatenating {len(clip_paths)} clips  →  {final}")
             self._ffmpeg_concat(clip_paths, final)
             for p in clip_paths:
                 Path(p).unlink(missing_ok=True)

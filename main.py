@@ -11,6 +11,18 @@ def main():
         run_scan(build_scan_parser().parse_args(sys.argv[2:]))
         return
 
+    if len(sys.argv) > 1 and sys.argv[1] == "inventory":
+        from args import build_inventory_parser
+        from inventory import run_inventory
+        run_inventory(build_inventory_parser().parse_args(sys.argv[2:]))
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "worker":
+        from args import build_worker_parser
+        from worker import run_worker
+        run_worker(build_worker_parser().parse_args(sys.argv[2:]))
+        return
+
     args = build_parser().parse_args()
 
     input_path = Path(args.input)

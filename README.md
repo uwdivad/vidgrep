@@ -36,6 +36,12 @@ Then install the rest:
 pip install -e .
 ```
 
+To include the terminal dashboard:
+
+```bash
+pip install -e ".[tui]"
+```
+
 To run on CPU only, skip the PyTorch step (a CPU build will be pulled in automatically) and pass `--no-gpu` at runtime.
 
 ## Usage
@@ -44,14 +50,75 @@ To run on CPU only, skip the PyTorch step (a CPU build will be pulled in automat
 vidgrep <input> (--text PATTERN | --template IMAGE) [options]
 ```
 
-The editable install exposes two commands:
+The editable install exposes these commands:
 
 | Command | Description |
 |---------|-------------|
 | `vidgrep` | Scan videos and extract matching clips, or run `vidgrep scan` for JSONL metadata only |
+| `vidgrep worker` | Process inventory CSV rows as a resumable OCR queue |
 | `vidgrep-region` | Interactive helper for choosing a `--region X Y W H` crop |
+| `vidgrep-tui` | Interactive scan dashboard with live progress, matches, logs, and clip extraction |
 
 For development from the repo root, `python main.py ...` and `python select_region.py ...` still work.
+
+### Terminal dashboard
+
+Install the TUI extra, then launch:
+
+```bash
+vidgrep-tui
+vidgrep-tui match.mp4 --text "GOAL" --interval 2
+```
+
+The dashboard currently focuses on OCR text scans. It can scan one file or a
+directory, show match and interval results, then extract all intervals or the
+selected interval using the same FFmpeg extraction code as the CLI.
+
+### Video inventory
+
+Use `vidgrep inventory` to find video files without running OCR:
+
+```bash
+# Scan all local drives on Windows, or / on Linux/macOS.
+# Without --output, the output stem defaults to yyyy-mm-dd.
+vidgrep inventory
+
+# Scan one directory
+vidgrep inventory "D:\Media" --output media_videos
+
+# Filter by filename, case-insensitive
+vidgrep inventory --name "match" --output match_videos
+
+# Regex against filename or directory path
+vidgrep inventory --regex "goal|highlight" --output goal_or_highlight
+
+# Regex only against directory path
+vidgrep inventory --regex "2026\\(clips|archive)" --regex-scope directory
+```
+
+The inventory command writes paired files: `<stem>.csv` with
+`filename,path,video_format,size,date,processed`, and `<stem>.json` with the same records
+plus roots scanned, filters, extensions, totals, and skipped access errors.
+The `processed` column defaults to `false` so the CSV can be used as a queue.
+If the CSV already exists, inventory merges by `path`, appends new rows, and
+preserves existing worker status columns.
+
+### OCR worker
+
+Use `vidgrep worker` to process an inventory CSV row by row with OCR:
+
+```bash
+vidgrep worker videos.csv --text "uwdivad" --region 132 476 592 388 --interval 2 --batch-size 16 --stats
+```
+
+The worker runs the equivalent of `vidgrep scan` for each row's `path`, streams
+output line by line, writes per-video JSONL/JSON files under `<csv_stem>_ocr/`,
+and updates the CSV after each row. Successful rows get `processed=true`;
+failed or missing files remain `processed=false`, so rerunning the same command
+retries the first unfinished row and continues through the rest.
+
+The `agent` name is intentionally left available for a later AI layer that can
+inspect JSONL results and organize or denormalize them.
 
 ### Detection modes
 

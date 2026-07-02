@@ -13,6 +13,7 @@ Recommended placeholders:
 - `LOGO.png`: a small template image that appears in `VIDEO.mp4`
 - `PATTERN`: a text string or Python regex to find with EasyOCR
 - `REGION`: four integers, `X Y W H`, from `select_region.py`
+- `NAME`: part of a filename to find in inventory mode
 
 ## 0. Environment and parser smoke tests
 
@@ -21,20 +22,28 @@ Recommended placeholders:
 $env:PYTHONIOENCODING = "utf-8"
 
 # Python syntax/import baseline used by this repo
-python -m py_compile main.py args.py clipper.py detector.py scan.py select_region.py
+python -m py_compile main.py args.py clipper.py detector.py scan.py inventory.py worker.py select_region.py tui.py
 
 # Install the console commands. Install CUDA torch first if testing OCR on GPU.
 python -m pip install -e .
 
+# Optional: install the Textual dashboard.
+python -m pip install -e ".[tui]"
+
 # CLI parser smoke tests
 python main.py --help
 python main.py scan --help
+python main.py inventory --help
+python main.py worker --help
 python select_region.py --help
 
 # Installed CLI smoke tests, after: pip install -e .
 vidgrep --help
 vidgrep scan --help
+vidgrep inventory --help
+vidgrep worker --help
 vidgrep-region --help
+vidgrep-tui --help
 
 # FFmpeg dependencies used for decode, clipping, concat, and codec detection
 ffmpeg -version
@@ -140,7 +149,65 @@ vidgrep scan "VIDEO.mp4" --text "PATTERN" --no-gpu --output results_cpu
 vidgrep scan "VIDEO.mp4" --text "PATTERN"
 ```
 
-## 5. Region picker helper
+## 5. Video inventory
+
+```powershell
+# Scan all local drives on Windows, or / elsewhere.
+# Without --output, the output stem defaults to yyyy-mm-dd.
+vidgrep inventory
+
+# Scan one directory recursively
+vidgrep inventory "DIR\" --output dir_videos
+
+# Scan by filename substring, case-insensitive
+vidgrep inventory --name "NAME" --output named_videos
+
+# Regex can match either the filename or directory path
+vidgrep inventory --regex "goal|highlight" --output regex_videos
+
+# Regex only against directory paths
+vidgrep inventory --regex "2026\\(clips|archive)" --regex-scope directory --output dir_regex_videos
+
+# Regex only against filenames
+vidgrep inventory --regex "goal.*\\.mp4$" --regex-scope filename --output file_regex_videos
+
+# Scan multiple roots with a filename filter
+vidgrep inventory "DIR\" "D:\Archive" --name "NAME" --output filtered_videos
+```
+
+Expected outputs:
+
+- `<stem>.csv` with `filename,path,video_format,size,date,processed`
+- `<stem>.json` with scanned roots, extensions, counts, total size, skipped paths, and full file metadata
+- Existing CSV rows are merged by path; worker status columns are preserved.
+
+## 6. OCR worker queue
+
+```powershell
+# Process each processed=false row in an inventory CSV
+vidgrep worker "videos.csv" --text "PATTERN" --region REGION --interval 2 --batch-size 16 --stats
+
+# Put per-video JSONL/JSON files under a custom output directory
+vidgrep worker "videos.csv" --text "PATTERN" --output-dir "worker_results"
+
+# Resume: rerun the same command. Rows with processed=true are skipped.
+vidgrep worker "videos.csv" --text "PATTERN" --region REGION --interval 2 --batch-size 16 --stats
+
+# Reprocess all rows even if processed=true
+vidgrep worker "videos.csv" --text "PATTERN" --force
+
+# Process only the first eligible row for a quick smoke test
+vidgrep worker "videos.csv" --text "PATTERN" --limit 1 --no-gpu
+```
+
+Expected CSV behavior:
+
+- Existing inventory columns are preserved.
+- Missing job columns are added automatically.
+- Successful rows get `processed=true`.
+- Failed, missing, or interrupted rows stay `processed=false` and are retried on resume.
+
+## 7. Region picker helper
 
 ```powershell
 # Interactive ROI selection; paste the printed X Y W H after --region
@@ -153,7 +220,28 @@ vidgrep-region "VIDEO.mp4" --time 12.5
 vidgrep-region "VIDEO.mp4" --time 12.5 --save-crop "crop.png"
 ```
 
-## 6. Expected parser and validation failures
+## 8. TUI dashboard
+
+```powershell
+# Open the dashboard with an empty form
+vidgrep-tui
+
+# Open with initial values prefilled
+vidgrep-tui "VIDEO.mp4" --text "PATTERN" --interval 2
+
+# Open with a crop region and CPU mode prefilled
+vidgrep-tui "VIDEO.mp4" --text "PATTERN" --region REGION --no-gpu
+```
+
+Manual checks:
+
+- Start a scan and confirm progress, logs, and match rows update.
+- Confirm the subtle ASCII companion appears only in the status area.
+- Select an interval row and run "Extract selected interval".
+- Run "Extract all intervals" after a multi-match scan.
+- Confirm no-match scans finish without enabling extraction buttons.
+
+## 9. Expected parser and validation failures
 
 These should fail cleanly with argparse or an explicit `Error:` message.
 
@@ -175,4 +263,13 @@ vidgrep scan "VIDEO.mp4" --template "LOGO.png"
 
 # scan requires at least one input
 vidgrep scan --text "PATTERN"
+
+# inventory rejects missing explicit roots
+vidgrep inventory "DOES_NOT_EXIST"
+
+# inventory rejects invalid regex
+vidgrep inventory --regex "["
+
+# worker requires a CSV path and --text
+vidgrep worker "videos.csv"
 ```

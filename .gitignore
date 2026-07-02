@@ -24,3 +24,14 @@ build/
 Thumbs.db
 
 scrap/
+
+# Generated inventory outputs
+[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].csv
+[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].json
+video_inventory_*.csv
+video_inventory_*.json
+videos.csv
+videos.json
+*_videos.csv
+*_videos.json
+*_ocr/

@@ -1,6 +1,6 @@
 """Frame detectors: GPU-accelerated OCR and image template matching."""
 import re
-from typing import Optional
+from typing import Callable, Optional
 
 import cv2
 import numpy as np
@@ -19,12 +19,20 @@ class TextDetector:
         gpu: bool = True,
         threshold: float = 0.5,
         languages: Optional[list] = None,
+        log: Optional[Callable[[str], None]] = None,
     ):
         self._pattern = re.compile(pattern, re.IGNORECASE)
         self._threshold = threshold
         self._gpu = gpu
         self._languages = languages or ["en"]
         self._reader = None  # lazy-load on first detect() call
+        self._log = log
+
+    def _emit(self, message: str) -> None:
+        if self._log is not None:
+            self._log(message)
+        else:
+            print(message, flush=True)
 
     def _load(self):
         if self._reader is None:
@@ -33,15 +41,14 @@ class TextDetector:
             if gpu:
                 import torch
                 if not torch.cuda.is_available():
-                    print(
+                    self._emit(
                         "WARNING: GPU requested but CUDA is unavailable — running OCR on "
                         "CPU (much slower). Reinstall a CUDA build of torch "
-                        "(RTX 5090 needs cu128); pass --no-gpu to silence this.",
-                        flush=True,
+                        "(RTX 5090 needs cu128); pass --no-gpu to silence this."
                     )
                     gpu = False
             mode = "GPU" if gpu else "CPU"
-            print(f"Loading OCR model ({mode}) …", flush=True)
+            self._emit(f"Loading OCR model ({mode}) …")
             self._reader = easyocr.Reader(self._languages, gpu=gpu, verbose=False)
 
     @staticmethod
@@ -118,10 +125,9 @@ class TextDetector:
             return [self.detect_matches(f) for f in frames]
         return [self._filter(res) for res in batched]
 
-    @staticmethod
-    def _announce(matches: list[dict]) -> bool:
+    def _announce(self, matches: list[dict]) -> bool:
         for m in matches:
-            print(f"[detected] {m['text']!r} (conf={m['confidence']:.2f})", flush=True)
+            self._emit(f"[detected] {m['text']!r} (conf={m['confidence']:.2f})")
         return len(matches) > 0
 
     def detect(self, frame: np.ndarray) -> bool:
@@ -143,8 +149,10 @@ class TemplateDetector:
         *,
         gpu: bool = True,
         threshold: float = 0.8,
+        log: Optional[Callable[[str], None]] = None,
     ):
         self._threshold = threshold
+        self._log = log
 
         tmpl = cv2.imread(template_path)
         if tmpl is None:
@@ -160,9 +168,15 @@ class TemplateDetector:
                     cv2.CV_8UC1, cv2.TM_CCOEFF_NORMED
                 )
                 self._cuda = True
-                print("Template matcher: CUDA enabled")
+                self._emit("Template matcher: CUDA enabled")
             except Exception:
-                print("Template matcher: CUDA unavailable, using CPU")
+                self._emit("Template matcher: CUDA unavailable, using CPU")
+
+    def _emit(self, message: str) -> None:
+        if self._log is not None:
+            self._log(message)
+        else:
+            print(message, flush=True)
 
     def detect(self, frame: np.ndarray) -> bool:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)

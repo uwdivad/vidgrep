@@ -155,6 +155,143 @@ def build_scan_parser() -> argparse.ArgumentParser:
     return p
 
 
+def build_inventory_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="vidgrep inventory",
+        description="Inventory video files and write paired CSV + JSON output",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_INVENTORY_USAGE,
+    )
+    p.add_argument(
+        "inputs", nargs="*", metavar="INPUT",
+        help=(
+            "Optional file or directory roots to scan recursively. "
+            "Default: all local drives on Windows, or / elsewhere."
+        ),
+    )
+    p.add_argument(
+        "--name", "-n", metavar="TEXT",
+        help="Only include video files whose filename contains TEXT (case-insensitive)",
+    )
+    p.add_argument(
+        "--regex", "-r", metavar="PATTERN",
+        help=(
+            "Only include video files whose filename and/or directory matches PATTERN "
+            "(case-insensitive)"
+        ),
+    )
+    p.add_argument(
+        "--regex-scope",
+        choices=("both", "filename", "directory"),
+        default="both",
+        help="Where --regex is matched: both, filename, or directory (default: both)",
+    )
+    p.add_argument(
+        "--output", "-o", metavar="STEM",
+        help="Output file stem (default: current date, yyyy-mm-dd)",
+    )
+    return p
+
+
+def build_worker_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="vidgrep worker",
+        description="Run resumable OCR scans from an inventory CSV",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_WORKER_USAGE,
+    )
+    p.add_argument("csv", help="Inventory CSV with a path column")
+    p.add_argument(
+        "--text", "-t", metavar="PATTERN", required=True,
+        help="Text / regex to search for in each video (case-insensitive)",
+    )
+    p.add_argument(
+        "--output-dir", metavar="DIR",
+        help="Directory for per-video JSONL/JSON outputs (default: <csv_stem>_ocr)",
+    )
+    p.add_argument(
+        "--limit", type=int, metavar="N",
+        help="Process at most N eligible rows in this run",
+    )
+    p.add_argument(
+        "--force", action="store_true",
+        help="Process rows even when processed is true",
+    )
+    p.add_argument(
+        "--skip-frames", "-s", type=int, default=3, metavar="N",
+        help="Analyse every Nth frame when --interval is not set (default: 3)",
+    )
+    p.add_argument(
+        "--interval", "-i", type=float, metavar="SEC",
+        help="Analyse one frame every SEC seconds instead of every Nth frame",
+    )
+    p.add_argument(
+        "--batch-size", "-b", type=int, default=8, metavar="N",
+        help="Frames per OCR batch (default: 8)",
+    )
+    p.add_argument(
+        "--threshold", type=float, default=0.5, metavar="0-1",
+        help="Min OCR confidence to count as a match (default: 0.5)",
+    )
+    p.add_argument(
+        "--region", nargs=4, type=int, metavar=("X", "Y", "W", "H"),
+        help="Only scan this rectangle in each frame",
+    )
+    p.add_argument(
+        "--lang", default="en", metavar="CODES",
+        help="Comma-separated EasyOCR language codes (default: en)",
+    )
+    p.add_argument(
+        "--no-gpu", action="store_true",
+        help="Disable CUDA and run OCR on CPU",
+    )
+    p.add_argument(
+        "--stats", action="store_true",
+        help="Print decode/detect throughput for each scan",
+    )
+    return p
+
+
+_WORKER_USAGE = """\
+Usage examples
+--------------
+  # Process each unprocessed row in an inventory CSV
+  vidgrep worker videos.csv --text "uwdivad" --region 132 476 592 388 --interval 2 --batch-size 16 --stats
+
+  # Put per-video JSONL/JSON output under a named directory
+  vidgrep worker cod_videos.csv --text "GOAL" --output-dir cod_ocr
+
+  # Resume naturally by retrying the first processed=false row
+  vidgrep worker videos.csv --text "uwdivad"
+
+  # Reprocess every row regardless of processed=true
+  vidgrep worker videos.csv --text "uwdivad" --force
+"""
+
+
+_INVENTORY_USAGE = """\
+Usage examples
+--------------
+  # Inventory all local drives; writes yyyy-mm-dd.csv and yyyy-mm-dd.json by default
+  vidgrep inventory
+
+  # Inventory one directory
+  vidgrep inventory "D:\\Media" --output media_videos
+
+  # Inventory all local drives but only filenames containing "match"
+  vidgrep inventory --name "match" --output match_videos
+
+  # Regex can match either filename or directory path by default
+  vidgrep inventory --regex "goal|highlight" --output goal_or_highlight
+
+  # Regex only against directory path
+  vidgrep inventory --regex "2026\\\\(clips|archive)" --regex-scope directory
+
+  # Inventory multiple roots
+  vidgrep inventory "D:\\Media" "E:\\Archive" --name "goal"
+"""
+
+
 _SCAN_USAGE = """\
 Usage examples
 --------------

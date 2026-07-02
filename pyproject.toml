@@ -15,16 +15,25 @@ dependencies = [
     "tqdm>=4.65.0",
 ]
 
+[project.optional-dependencies]
+tui = [
+    "textual>=6.0.0",
+]
+
 [project.scripts]
 vidgrep = "main:main"
 vidgrep-region = "select_region:main"
+vidgrep-tui = "tui:main"
 
 [tool.setuptools]
 py-modules = [
     "args",
     "clipper",
     "detector",
+    "inventory",
     "main",
     "scan",
     "select_region",
+    "tui",
+    "worker",
 ]
