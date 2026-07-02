@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vidgrep"
+version = "0.1.0"
+description = "Scan videos for text or image templates and extract matching clips."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "easyocr>=1.7.0",
+    "opencv-python>=4.9.0",
+    "numpy>=1.24.0",
+    "tqdm>=4.65.0",
+]
+
+[project.scripts]
+vidgrep = "main:main"
+vidgrep-region = "select_region:main"
+
+[tool.setuptools]
+py-modules = [
+    "args",
+    "clipper",
+    "detector",
+    "main",
+    "scan",
+    "select_region",
+]

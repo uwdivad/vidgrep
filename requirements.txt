@@ -1,8 +1,8 @@
 # Install CUDA-enabled PyTorch FIRST (before the rest), e.g.:
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 # (Same URL works on Windows and Linux)
-# Then install everything else:
-#   pip install -r requirements.txt
+# Then install the CLI in editable mode:
+#   pip install -e .
 #
 # Windows: FFmpeg must be installed separately and added to PATH.
 #   Download from https://www.gyan.dev/ffmpeg/builds/ (ffmpeg-release-essentials.zip)

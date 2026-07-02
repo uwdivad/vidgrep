@@ -1,10 +1,10 @@
-# clip
+# vidgrep
 
 Scan a video for text or a visual pattern, then extract clips around each match.
 
 ```
-python main.py match.mp4 --text "GOAL"
-python main.py gameplay.mp4 --template logo.png
+vidgrep match.mp4 --text "GOAL"
+vidgrep gameplay.mp4 --template logo.png
 ```
 
 ## How it works
@@ -16,7 +16,7 @@ python main.py gameplay.mp4 --template logo.png
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.9+
 - FFmpeg on `PATH`
   - **Linux:** `sudo apt install ffmpeg`
   - **Windows:** download from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) (`ffmpeg-release-essentials.zip`), add the `bin/` folder to your system PATH
@@ -33,7 +33,7 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 Then install the rest:
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
 To run on CPU only, skip the PyTorch step (a CPU build will be pulled in automatically) and pass `--no-gpu` at runtime.
@@ -41,8 +41,17 @@ To run on CPU only, skip the PyTorch step (a CPU build will be pulled in automat
 ## Usage
 
 ```
-python main.py <input> (--text PATTERN | --template IMAGE) [options]
+vidgrep <input> (--text PATTERN | --template IMAGE) [options]
 ```
+
+The editable install exposes two commands:
+
+| Command | Description |
+|---------|-------------|
+| `vidgrep` | Scan videos and extract matching clips, or run `vidgrep scan` for JSONL metadata only |
+| `vidgrep-region` | Interactive helper for choosing a `--region X Y W H` crop |
+
+For development from the repo root, `python main.py ...` and `python select_region.py ...` still work.
 
 ### Detection modes
 
@@ -79,22 +88,22 @@ By default clips are stream-copied (fast, but cuts snap to the nearest keyframe,
 
 ```bash
 # Extract every moment "GOAL" appears, ±5 s
-python main.py match.mp4 --text "GOAL"
+vidgrep match.mp4 --text "GOAL"
 
 # Only scan the bottom third of the frame (faster OCR)
-python main.py stream.mp4 --text "LIVE" --region 0 720 1280 360
+vidgrep stream.mp4 --text "LIVE" --region 0 720 1280 360
 
 # Template matching with a higher similarity threshold
-python main.py gameplay.mp4 --template hud.png --threshold 0.85
+vidgrep gameplay.mp4 --template hud.png --threshold 0.85
 
 # Merge all clips into one file, re-encoded for frame accuracy
-python main.py movie.mp4 --text "Chapter" --concat --lossless
+vidgrep movie.mp4 --text "Chapter" --concat --lossless
 
 # Fast scan of a long video on CPU only
-python main.py long.mp4 --text "error" --skip-frames 10 --merge-gap 5 --no-gpu
+vidgrep long.mp4 --text "error" --skip-frames 10 --merge-gap 5 --no-gpu
 
 # Sample one frame every 2 s — frame-rate independent, big speedup on long videos
-python main.py long.mp4 --text "error" --interval 2
+vidgrep long.mp4 --text "error" --interval 2
 ```
 
 ## Troubleshooting

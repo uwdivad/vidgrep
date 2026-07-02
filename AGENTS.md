@@ -4,32 +4,36 @@ High-signal notes for AI agents. `CLAUDE.md` has the longer architecture overvie
 
 ## What this is
 
-`clip` — a CLI that scans a video for text (EasyOCR) or an image template (OpenCV cross-correlation) and extracts padded clips around each match via FFmpeg. Flat layout, no package/`__init__.py`/build step — run from the repo root:
+`vidgrep` — a CLI that scans a video for text (EasyOCR) or an image template (OpenCV cross-correlation) and extracts padded clips around each match via FFmpeg. Flat layout with `pyproject.toml` console scripts:
 
 ```bash
-python main.py video.mp4 --text "GOAL"        # clip mode
-python main.py scan video.mp4 --text "GOAL"    # scan-only: writes JSONL + JSON, no clips
-python select_region.py video.mp4             # interactive helper to pick a --region box
+vidgrep video.mp4 --text "GOAL"        # clip mode
+vidgrep scan video.mp4 --text "GOAL"   # scan-only: writes JSONL + JSON, no clips
+vidgrep-region video.mp4               # interactive helper to pick a --region box
 ```
+
+Direct script execution from the repo root still works for development:
+`python main.py ...` and `python select_region.py ...`.
 
 ## Setup — install order matters
 
-CUDA PyTorch must be installed **before** `pip install -r requirements.txt`. EasyOCR binds to whatever torch build is present at import time; a CPU wheel makes OCR silently fall back to CPU.
+CUDA PyTorch must be installed **before** `pip install -e .`. EasyOCR binds to whatever torch build is present at import time; a CPU wheel makes OCR silently fall back to CPU.
 
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
-pip install -r requirements.txt
+pip install -e .
 ```
 
 Use the **cu128** wheel for RTX 50-series / Blackwell (`sm_120`); `cu121`/`cu118` won't drive them. FFmpeg **and** `ffprobe` must be on `PATH` (decode, clip extraction, codec detection).
 
 ## Verification — there is no test suite, linter, or typechecker
 
-No `pytest`/`tox`/`pyproject.toml`/CI exists. The verification loop is:
+No `pytest`/`tox`/CI exists. The verification loop is:
 
 ```bash
-python -m py_compile main.py args.py clipper.py detector.py scan.py   # syntax check
-python main.py --help && python main.py scan --help                   # import + arg-parse smoke test
+python -m py_compile main.py args.py clipper.py detector.py scan.py select_region.py
+python main.py --help && python main.py scan --help
+vidgrep --help && vidgrep scan --help && vidgrep-region --help
 ```
 
 `test_commands.md` is a set of manual command templates (placeholders in ALL_CAPS), not an automated suite.

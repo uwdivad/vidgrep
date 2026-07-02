@@ -3,7 +3,7 @@ import argparse
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="clip",
+        prog="vidgrep",
         description="Clip video segments where text or an image pattern appears",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_USAGE,
@@ -100,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def build_scan_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="clip scan",
+        prog="vidgrep scan",
         description="Scan video files for text matches and write results to JSONL",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_SCAN_USAGE,
@@ -159,16 +159,16 @@ _SCAN_USAGE = """\
 Usage examples
 --------------
   # Scan a single file
-  python main.py scan match.mp4 --text "GOAL" --output results
+  vidgrep scan match.mp4 --text "GOAL" --output results
 
   # Scan an entire directory recursively
-  python main.py scan /sports/videos/ --text "GOAL" --output goals
+  vidgrep scan /sports/videos/ --text "GOAL" --output goals
 
   # Mix files and directories, restrict to a region of the frame
-  python main.py scan game1.mp4 /archive/ --text "SCORE" --region 0 810 1440 270
+  vidgrep scan game1.mp4 /archive/ --text "SCORE" --region 0 810 1440 270
 
   # Sample one frame every 2 s instead of every Nth frame
-  python main.py scan game1.mp4 --text "GOAL" --interval 2
+  vidgrep scan game1.mp4 --text "GOAL" --interval 2
 """
 
 
@@ -176,23 +176,23 @@ _USAGE = """\
 Usage examples
 --------------
   # Clip every segment where "GOAL" appears (±5 s padding)
-  python main.py match.mp4 --text "GOAL"
+  vidgrep match.mp4 --text "GOAL"
 
-  # Case-sensitive regex, custom padding, only scan bottom-third of frame
-  python main.py stream.mp4 --text "LIVE" --padding 10 --region 0 720 1280 360
+  # Regex search, custom padding, only scan bottom-third of frame
+  vidgrep stream.mp4 --text "LIVE" --padding 10 --region 0 720 1280 360
 
   # Template (image) matching instead of OCR
-  python main.py gameplay.mp4 --template logo.png --threshold 0.85
+  vidgrep gameplay.mp4 --template logo.png --threshold 0.85
 
   # Process every video in a directory (recursive); clips land next to each source
-  python main.py /sports/videos/ --text "GOAL"
+  vidgrep /sports/videos/ --text "GOAL"
 
   # Multiple hits concatenated into one file, re-encoded with NVENC
-  python main.py movie.mp4 --text "Chapter" --concat --reencode
+  vidgrep movie.mp4 --text "Chapter" --concat --reencode
 
   # Faster scan: process every 5th frame, merge gaps ≤ 3 s, disable GPU
-  python main.py long.mp4 --text "error" --skip-frames 5 --merge-gap 3 --no-gpu
+  vidgrep long.mp4 --text "error" --skip-frames 5 --merge-gap 3 --no-gpu
 
   # Sample one frame every 2 s (frame-rate independent, much faster on long videos)
-  python main.py long.mp4 --text "error" --interval 2
+  vidgrep long.mp4 --text "error" --interval 2
 """
