@@ -24,6 +24,9 @@ $env:PYTHONIOENCODING = "utf-8"
 # Python syntax/import baseline used by this repo
 python -m py_compile main.py args.py clipper.py detector.py scan.py inventory.py worker.py select_region.py tui.py
 
+# Fast unit tests for pure-Python inventory, worker, and parser behavior
+python -m pytest
+
 # Install the console commands. Install CUDA torch first if testing OCR on GPU.
 python -m pip install -e .
 

@@ -36,6 +36,12 @@ Then install the rest:
 pip install -e .
 ```
 
+To include the unit-test runner:
+
+```bash
+pip install -e ".[test]"
+```
+
 To include the terminal dashboard:
 
 ```bash

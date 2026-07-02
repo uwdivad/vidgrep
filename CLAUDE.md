@@ -29,10 +29,22 @@ picks up the CUDA build at import time:
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 pip install -e .
+pip install -e ".[test]" # optional unit-test dependencies
 pip install -e ".[tui]"  # optional Textual dashboard
 ```
 
 FFmpeg and ffprobe must be available on `PATH`.
+
+## Testing
+
+```bash
+python -m pytest
+python -m py_compile main.py args.py clipper.py detector.py scan.py inventory.py worker.py select_region.py tui.py
+```
+
+The unit tests cover parser, inventory, and worker CSV behavior without invoking
+EasyOCR, FFmpeg, or real videos. Use `test_commands.md` for manual OCR,
+clipping, and TUI smoke checks.
 
 ## Running
 

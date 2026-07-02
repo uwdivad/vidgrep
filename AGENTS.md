@@ -26,22 +26,24 @@ CUDA PyTorch must be installed **before** `pip install -e .`. EasyOCR binds to w
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 pip install -e .
+pip install -e ".[test]" # optional unit-test dependencies
 pip install -e ".[tui]"  # optional dashboard
 ```
 
 Use the **cu128** wheel for RTX 50-series / Blackwell (`sm_120`); `cu121`/`cu118` won't drive them. FFmpeg **and** `ffprobe` must be on `PATH` (decode, clip extraction, codec detection).
 
-## Verification — there is no test suite, linter, or typechecker
+## Verification
 
-No `pytest`/`tox`/CI exists. The verification loop is:
+Fast unit tests cover pure-Python parser, inventory, and worker queue behavior. OCR, FFmpeg, and TUI behavior still need smoke/manual checks.
 
 ```bash
+python -m pytest
 python -m py_compile main.py args.py clipper.py detector.py scan.py inventory.py worker.py select_region.py tui.py
 python main.py --help && python main.py scan --help && python main.py inventory --help && python main.py worker --help
 vidgrep --help && vidgrep scan --help && vidgrep inventory --help && vidgrep worker --help && vidgrep-region --help && vidgrep-tui --help
 ```
 
-`test_commands.md` is a set of manual command templates (placeholders in ALL_CAPS), not an automated suite.
+`test_commands.md` is a set of manual command templates (placeholders in ALL_CAPS) for OCR/FFmpeg/TUI flows that are not covered by unit tests.
 
 ## Architecture gotchas not obvious from filenames
 
