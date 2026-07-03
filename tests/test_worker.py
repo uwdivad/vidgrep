@@ -51,27 +51,32 @@ def test_load_csv_adds_worker_columns_and_default_processed(tmp_path):
     assert "error" in fieldnames
 
 
-def test_build_scan_command_includes_worker_options(tmp_path):
+def test_run_scan_job_writes_jsonl_and_metadata(tmp_path, monkeypatch):
     video_path = tmp_path / "clip.mp4"
+    video_path.write_text("", encoding="utf-8")
     output_stem = tmp_path / "out" / "clip"
-    args = _args(
-        tmp_path / "videos.csv",
-        interval=2,
-        region=[132, 476, 592, 388],
-        no_gpu=True,
-        stats=True,
-        batch_size=16,
-        threshold=0.7,
-    )
+    args = _args(tmp_path / "videos.csv")
 
-    cmd = worker._build_scan_command(args, video_path, output_stem)
+    def fake_scan_video(*, video_path, detector, args, options_id, on_record):
+        on_record({
+            "match_id": "match-1",
+            "scan_id": "scan-1",
+            "source_id": "source-1",
+            "file": video_path.name,
+            "path": str(video_path),
+            "timestamp": 1.0,
+            "text": "uwdivad enemy",
+            "confidence": 0.9,
+        })
+        return 1
 
-    assert cmd[:4] == [worker.sys.executable, "-u", str(worker.Path(worker.__file__).with_name("main.py")), "scan"]
-    assert "--interval" in cmd
-    assert cmd[cmd.index("--interval") + 1] == "2"
-    assert cmd[cmd.index("--region") + 1 : cmd.index("--region") + 5] == ["132", "476", "592", "388"]
-    assert "--no-gpu" in cmd
-    assert "--stats" in cmd
+    monkeypatch.setattr("scan.scan_video", fake_scan_video)
+
+    match_count = worker._run_scan_job(args, video_path, output_stem, object(), "options-1")
+
+    assert match_count == 1
+    assert json.loads(output_stem.with_suffix(".jsonl").read_text(encoding="utf-8"))["match_id"] == "match-1"
+    assert json.loads(output_stem.with_suffix(".json").read_text(encoding="utf-8"))["match_count"] == 1
 
 
 def test_run_worker_skips_processed_and_marks_success(tmp_path, monkeypatch):
@@ -89,18 +94,19 @@ def test_run_worker_skips_processed_and_marks_success(tmp_path, monkeypatch):
     )
     calls = []
 
-    def fake_run_streaming(cmd):
-        calls.append(cmd)
-        output_stem = worker.Path(cmd[cmd.index("--output") + 1])
+    def fake_run_scan_job(args, video_path, output_stem, detector, options_id):
+        calls.append((video_path, detector))
         output_stem.with_suffix(".json").write_text(json.dumps({"match_count": 3}), encoding="utf-8")
-        return 0, ""
+        return 3
 
-    monkeypatch.setattr(worker, "_run_streaming", fake_run_streaming)
+    monkeypatch.setattr(worker, "_build_detector", lambda args: "detector")
+    monkeypatch.setattr(worker, "_run_scan_job", fake_run_scan_job)
 
     worker.run_worker(_args(csv_path))
 
     rows = _read_rows(csv_path)
     assert len(calls) == 1
+    assert calls[0] == (second, "detector")
     assert rows[0]["processed"] == "true"
     assert rows[1]["processed"] == "true"
     assert rows[1]["match_count"] == "3"
@@ -120,12 +126,12 @@ def test_run_worker_failed_row_does_not_stop_next_row(tmp_path, monkeypatch):
         ],
     )
 
-    def fake_run_streaming(cmd):
-        output_stem = worker.Path(cmd[cmd.index("--output") + 1])
+    def fake_run_scan_job(args, video_path, output_stem, detector, options_id):
         output_stem.with_suffix(".json").write_text(json.dumps({"match_count": 1}), encoding="utf-8")
-        return 0, ""
+        return 1
 
-    monkeypatch.setattr(worker, "_run_streaming", fake_run_streaming)
+    monkeypatch.setattr(worker, "_build_detector", lambda args: "detector")
+    monkeypatch.setattr(worker, "_run_scan_job", fake_run_scan_job)
 
     worker.run_worker(_args(csv_path))
 
@@ -136,18 +142,56 @@ def test_run_worker_failed_row_does_not_stop_next_row(tmp_path, monkeypatch):
     assert rows[1]["match_count"] == "1"
 
 
-def test_run_worker_nonzero_exit_leaves_row_unprocessed(tmp_path, monkeypatch):
+def test_run_worker_exception_leaves_row_unprocessed(tmp_path, monkeypatch):
     video_path = tmp_path / "clip.mp4"
     video_path.write_text("", encoding="utf-8")
     csv_path = tmp_path / "videos.csv"
     _write_rows(csv_path, [{"path": str(video_path), "processed": "false"}])
 
-    monkeypatch.setattr(worker, "_run_streaming", lambda cmd: (2, "scan failed"))
+    def fake_run_scan_job(args, video_path, output_stem, detector, options_id):
+        raise RuntimeError("scan failed")
+
+    monkeypatch.setattr(worker, "_build_detector", lambda args: "detector")
+    monkeypatch.setattr(worker, "_run_scan_job", fake_run_scan_job)
 
     worker.run_worker(_args(csv_path))
 
     rows = _read_rows(csv_path)
     assert rows[0]["processed"] == "false"
-    assert rows[0]["exit_code"] == "2"
+    assert rows[0]["exit_code"] == ""
     assert rows[0]["error"] == "scan failed"
 
+
+def test_run_worker_reuses_detector_for_multiple_rows(tmp_path, monkeypatch):
+    first = tmp_path / "first.mp4"
+    second = tmp_path / "second.mp4"
+    first.write_text("", encoding="utf-8")
+    second.write_text("", encoding="utf-8")
+    csv_path = tmp_path / "videos.csv"
+    _write_rows(
+        csv_path,
+        [
+            {"path": str(first), "processed": "false"},
+            {"path": str(second), "processed": "false"},
+        ],
+    )
+    detector_builds = []
+    detectors_used = []
+
+    def fake_build_detector(args):
+        detector_builds.append(args.text)
+        return object()
+
+    def fake_run_scan_job(args, video_path, output_stem, detector, options_id):
+        detectors_used.append(detector)
+        output_stem.with_suffix(".json").write_text(json.dumps({"match_count": 0}), encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(worker, "_build_detector", fake_build_detector)
+    monkeypatch.setattr(worker, "_run_scan_job", fake_run_scan_job)
+
+    worker.run_worker(_args(csv_path))
+
+    assert detector_builds == ["uwdivad"]
+    assert len(detectors_used) == 2
+    assert detectors_used[0] is detectors_used[1]

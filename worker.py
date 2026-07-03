@@ -2,10 +2,8 @@
 import csv
 import json
 import re
-import subprocess
 import sys
 import tempfile
-from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -79,66 +77,6 @@ def _write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
     tmp_path.replace(path)
 
 
-def _build_scan_command(args, video_path: Path, output_stem: Path) -> list[str]:
-    main_path = Path(__file__).with_name("main.py")
-    cmd = [
-        sys.executable,
-        "-u",
-        str(main_path),
-        "scan",
-        str(video_path),
-        "--text",
-        args.text,
-        "--output",
-        str(output_stem),
-        "--skip-frames",
-        str(args.skip_frames),
-        "--batch-size",
-        str(args.batch_size),
-        "--threshold",
-        str(args.threshold),
-        "--lang",
-        args.lang,
-    ]
-
-    if args.interval is not None:
-        cmd.extend(["--interval", str(args.interval)])
-    if args.region:
-        cmd.extend(["--region", *(str(part) for part in args.region)])
-    if args.no_gpu:
-        cmd.append("--no-gpu")
-    if args.stats:
-        cmd.append("--stats")
-    return cmd
-
-
-def _run_streaming(cmd: list[str]) -> tuple[int, str]:
-    tail: deque[str] = deque(maxlen=30)
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-    )
-    try:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            print(line, end="", flush=True)
-            tail.append(line.rstrip())
-        return proc.wait(), "\n".join(tail)
-    except KeyboardInterrupt:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-        raise
-
-
 def _read_match_count(json_path: Path) -> str:
     try:
         data = json.loads(json_path.read_text(encoding="utf-8"))
@@ -180,7 +118,53 @@ def _mark_failure(row: dict, exit_code: Optional[int], error: str) -> None:
     row["error"] = error.strip()[:2000]
 
 
+def _build_detector(args):
+    from detector import TextDetector
+
+    languages = [lang.strip() for lang in args.lang.split(",")]
+    return TextDetector(
+        args.text,
+        gpu=not args.no_gpu,
+        threshold=args.threshold,
+        languages=languages,
+    )
+
+
+def _run_scan_job(args, video_path: Path, output_stem: Path, detector, options_id: str) -> int:
+    from scan import scan_metadata, scan_video
+
+    started_at = datetime.now(timezone.utc)
+    jsonl_path = output_stem.with_suffix(".jsonl")
+    meta_path = output_stem.with_suffix(".json")
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with jsonl_path.open("w", encoding="utf-8") as jsonl_file:
+        def write_record(record):
+            jsonl_file.write(json.dumps(record) + "\n")
+            jsonl_file.flush()
+
+        match_count = scan_video(
+            video_path=video_path,
+            detector=detector,
+            args=args,
+            options_id=options_id,
+            on_record=write_record,
+        )
+
+    metadata = scan_metadata(
+        args=args,
+        started_at=started_at,
+        inputs=[str(video_path)],
+        files_scanned=1,
+        match_count=match_count,
+    )
+    meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return match_count
+
+
 def run_worker(args) -> None:
+    from scan import _scan_options_id
+
     csv_path = Path(args.csv)
     if not csv_path.exists():
         sys.exit(f"Error: not found: {csv_path}")
@@ -192,6 +176,8 @@ def run_worker(args) -> None:
     skipped_done = 0
     succeeded = 0
     failed = 0
+    detector = None
+    options_id = _scan_options_id(args)
 
     for index, row in enumerate(rows, 1):
         if _is_processed(row) and not args.force:
@@ -221,24 +207,24 @@ def run_worker(args) -> None:
             print(f"Error: not found: {video_path}", flush=True)
             continue
 
-        cmd = _build_scan_command(args, video_path, output_stem)
-        print("Running: " + " ".join(f'"{part}"' if " " in part else part for part in cmd), flush=True)
-
         try:
-            exit_code, tail = _run_streaming(cmd)
+            if detector is None:
+                detector = _build_detector(args)
+            _run_scan_job(args, video_path, output_stem, detector, options_id)
         except KeyboardInterrupt:
             _mark_failure(row, None, "interrupted")
             _write_csv(csv_path, rows, fieldnames)
             print("\nInterrupted. CSV progress was saved.", flush=True)
             raise
-
-        if exit_code == 0:
-            _mark_success(row, output_stem, exit_code)
-            succeeded += 1
-        else:
-            _mark_failure(row, exit_code, tail or f"scan exited with {exit_code}")
+        except Exception as exc:
+            _mark_failure(row, None, str(exc))
             failed += 1
-        _write_csv(csv_path, rows, fieldnames)
+            print(f"Error: {exc}", flush=True)
+        else:
+            _mark_success(row, output_stem, 0)
+            succeeded += 1
+        finally:
+            _write_csv(csv_path, rows, fieldnames)
 
     print(
         f"\nWorker complete: attempted={attempted}, succeeded={succeeded}, "

@@ -6,7 +6,7 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
+from typing import Callable, List
 
 import cv2
 
@@ -82,9 +82,83 @@ def find_video_files(path: Path) -> List[Path]:
     raise FileNotFoundError(f"Path does not exist: {path}")
 
 
+def scan_video(
+    *,
+    video_path: Path,
+    detector,
+    args,
+    options_id: str,
+    on_record: Callable[[dict], None],
+) -> int:
+    """Scan one video with an existing detector and stream JSONL-ready records."""
+    from clipper import VideoClipper
+
+    clipper = VideoClipper(str(video_path))
+    resolved_path = str(video_path.resolve())
+    scan_id = str(uuid.uuid4())
+    source_id = _make_source_id(video_path)
+    region = tuple(args.region) if args.region else None
+    match_count = 0
+
+    def write_match(m):
+        nonlocal match_count
+        record = {
+            "match_id": _make_match_id(
+                source_id=source_id,
+                scan_options_id=options_id,
+                timestamp=m["timestamp"],
+                text=m["text"],
+                confidence=m["confidence"],
+            ),
+            "scan_id": scan_id,
+            "source_id": source_id,
+            "file": video_path.name,
+            "path": resolved_path,
+            "timestamp": m["timestamp"],
+            "text": m["text"],
+            "confidence": m["confidence"],
+        }
+        on_record(record)
+        match_count += 1
+
+    if args.interval:
+        skip_frames = max(1, round(args.interval * clipper.fps))
+        print(
+            f"Sampling 1 frame every {args.interval:g}s "
+            f"(every {skip_frames} frames at {clipper.fps:.2f} fps)."
+        )
+    else:
+        skip_frames = args.skip_frames
+
+    clipper.scan_for_matches(
+        detector, skip_frames=skip_frames, region=region,
+        batch_size=args.batch_size, collect_stats=args.stats,
+        on_match=write_match,
+    )
+    return match_count
+
+
+def scan_metadata(*, args, started_at: datetime, inputs: list[str], files_scanned: int, match_count: int) -> dict:
+    completed_at = datetime.now(timezone.utc)
+    return {
+        "pattern": args.text,
+        "started_at": started_at.isoformat(),
+        "completed_at": completed_at.isoformat(),
+        "files_scanned": files_scanned,
+        "match_count": match_count,
+        "inputs": [str(Path(i).resolve()) for i in inputs],
+        "options": {
+            "threshold": args.threshold,
+            "skip_frames": args.skip_frames,
+            "interval": args.interval,
+            "region": list(args.region) if args.region else None,
+            "lang": args.lang,
+        },
+    }
+
+
 def run_scan(args) -> None:
     from detector import TextDetector
-    from clipper import VideoClipper
 
     started_at = datetime.now(timezone.utc)
 
@@ -120,75 +194,34 @@ def run_scan(args) -> None:
     use_gpu = not args.no_gpu
     languages = [lang.strip() for lang in args.lang.split(",")]
     detector = TextDetector(args.text, gpu=use_gpu, threshold=args.threshold, languages=languages)
-    region = tuple(args.region) if args.region else None
 
     match_count = 0
     with jsonl_path.open("w", encoding="utf-8") as jsonl_file:
         for video_path in all_video_files:
             print(f"\nScanning '{video_path.name}' …")
-            try:
-                clipper = VideoClipper(str(video_path))
-            except ValueError as exc:
-                print(f"Warning: skipping '{video_path}': {exc}", file=sys.stderr)
-                continue
 
-            resolved_path = str(video_path.resolve())
-            scan_id = str(uuid.uuid4())
-            source_id = _make_source_id(video_path)
-
-            def write_match(m, _file=video_path.name, _path=resolved_path):
-                nonlocal match_count
-                record = {
-                    "match_id": _make_match_id(
-                        source_id=source_id,
-                        scan_options_id=options_id,
-                        timestamp=m["timestamp"],
-                        text=m["text"],
-                        confidence=m["confidence"],
-                    ),
-                    "scan_id": scan_id,
-                    "source_id": source_id,
-                    "file": _file,
-                    "path": _path,
-                    "timestamp": m["timestamp"],
-                    "text": m["text"],
-                    "confidence": m["confidence"],
-                }
+            def write_record(record):
                 jsonl_file.write(json.dumps(record) + "\n")
                 jsonl_file.flush()
-                match_count += 1
 
-            if args.interval:
-                skip_frames = max(1, round(args.interval * clipper.fps))
-                print(
-                    f"Sampling 1 frame every {args.interval:g}s "
-                    f"(every {skip_frames} frames at {clipper.fps:.2f} fps)."
+            try:
+                match_count += scan_video(
+                    video_path=video_path,
+                    detector=detector,
+                    args=args,
+                    options_id=options_id,
+                    on_record=write_record,
                 )
-            else:
-                skip_frames = args.skip_frames
+            except ValueError as exc:
+                print(f"Warning: skipping '{video_path}': {exc}", file=sys.stderr)
 
-            clipper.scan_for_matches(
-                detector, skip_frames=skip_frames, region=region,
-                batch_size=args.batch_size, collect_stats=args.stats,
-                on_match=write_match,
-            )
-
-    completed_at = datetime.now(timezone.utc)
-    metadata = {
-        "pattern": args.text,
-        "started_at": started_at.isoformat(),
-        "completed_at": completed_at.isoformat(),
-        "files_scanned": len(all_video_files),
-        "match_count": match_count,
-        "inputs": [str(Path(i).resolve()) for i in args.inputs],
-        "options": {
-            "threshold": args.threshold,
-            "skip_frames": args.skip_frames,
-            "interval": args.interval,
-            "region": list(args.region) if args.region else None,
-            "lang": args.lang,
-        },
-    }
+    metadata = scan_metadata(
+        args=args,
+        started_at=started_at,
+        inputs=args.inputs,
+        files_scanned=len(all_video_files),
+        match_count=match_count,
+    )
     meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
     print(f"\nWrote {match_count} match(es) across {len(all_video_files)} file(s).")
