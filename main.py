@@ -23,6 +23,12 @@ def main():
         run_worker(build_worker_parser().parse_args(sys.argv[2:]))
         return
 
+    if len(sys.argv) > 1 and sys.argv[1] == "agent":
+        from args import build_agent_parser
+        from agent import run_agent
+        run_agent(build_agent_parser().parse_args(sys.argv[2:]))
+        return
+
     args = build_parser().parse_args()
 
     input_path = Path(args.input)

@@ -1,5 +1,7 @@
 import argparse
 
+from agent import DEFAULT_MODEL
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -34,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--skip-frames", "-s", type=int, default=3, metavar="N",
-        help="Analyse every Nth frame – higher = faster scan (default: 3)",
+        help="Analyse every Nth frame - higher = faster scan (default: 3)",
     )
     p.add_argument(
         "--interval", "-i", type=float, metavar="SEC",
@@ -46,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--batch-size", "-b", type=int, default=8, metavar="N",
-        help="Frames per OCR batch – higher = better GPU utilisation, more VRAM (default: 8)",
+        help="Frames per OCR batch - higher = better GPU utilisation, more VRAM (default: 8)",
     )
     p.add_argument(
         "--stats", action="store_true",
@@ -66,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--min-duration", type=float, default=0.0, metavar="SEC",
-        help="Discard matched intervals shorter than this (default: 0 – keep all)",
+        help="Discard matched intervals shorter than this (default: 0 - keep all)",
     )
     p.add_argument(
         "--lang", default="en", metavar="CODES",
@@ -130,7 +132,7 @@ def build_scan_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--batch-size", "-b", type=int, default=8, metavar="N",
-        help="Frames per OCR batch – higher = better GPU utilisation, more VRAM (default: 8)",
+        help="Frames per OCR batch - higher = better GPU utilisation, more VRAM (default: 8)",
     )
     p.add_argument(
         "--stats", action="store_true",
@@ -252,6 +254,78 @@ def build_worker_parser() -> argparse.ArgumentParser:
     return p
 
 
+def build_agent_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="vidgrep agent",
+        description="Group scan JSONL rows into OpenAI-canonicalized text intervals",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_AGENT_USAGE,
+    )
+    p.add_argument(
+        "input",
+        metavar="INPUT",
+        help="Scan JSONL file, directory of JSONL files, or worker CSV with jsonl_path",
+    )
+    p.add_argument(
+        "--search-term", "-t", metavar="TEXT", required=True,
+        help="Anchor text used in the original OCR scan, e.g. uwdivad",
+    )
+    p.add_argument(
+        "--output", "-o", metavar="STEM",
+        help="Output file stem (default: derived from input)",
+    )
+    p.add_argument(
+        "--merge-gap", type=float, default=2.0, metavar="SEC",
+        help="Merge adjacent rows with the same canonical label within SEC seconds (default: 2)",
+    )
+    p.add_argument(
+        "--openai-model", default=DEFAULT_MODEL, metavar="MODEL",
+        help=f"OpenAI model for OCR line canonicalization (default: {DEFAULT_MODEL})",
+    )
+    p.add_argument(
+        "--env-file", default=".env", metavar="PATH",
+        help="Environment file to load before reading OPENAI_API_KEY (default: .env)",
+    )
+    p.add_argument(
+        "--no-env-override", action="store_true",
+        help="Keep existing environment variables when loading --env-file",
+    )
+    p.add_argument(
+        "--batch-size", type=int, default=100, metavar="N",
+        help="Unique OCR line variants per OpenAI request (default: 100)",
+    )
+    p.add_argument(
+        "--watch", action="store_true",
+        help="Poll the input and refresh grouped outputs as new rows arrive",
+    )
+    p.add_argument(
+        "--force", action="store_true",
+        help="Refresh OpenAI canonicalizations even when cached state exists",
+    )
+    p.add_argument(
+        "--poll-interval", type=float, default=2.0, metavar="SEC",
+        help="Seconds between --watch refreshes (default: 2)",
+    )
+    return p
+
+
+_AGENT_USAGE = """\
+Usage examples
+--------------
+  # Group one scan JSONL into results.agent.jsonl and results.agent.json
+  vidgrep agent results.jsonl --search-term uwdivad
+
+  # Group every JSONL under a worker output directory
+  vidgrep agent cod_ocr --search-term uwdivad --merge-gap 2
+
+  # Use a specific OpenAI model and output stem
+  vidgrep agent results.jsonl --search-term uwdivad --openai-model gpt-5.4-mini --output grouped
+
+  # Refresh grouped output while a scan is still appending rows
+  vidgrep agent results.jsonl --search-term uwdivad --watch
+"""
+
+
 _WORKER_USAGE = """\
 Usage examples
 --------------
@@ -312,7 +386,7 @@ Usage examples
 _USAGE = """\
 Usage examples
 --------------
-  # Clip every segment where "GOAL" appears (±5 s padding)
+  # Clip every segment where "GOAL" appears (+/-5 s padding)
   vidgrep match.mp4 --text "GOAL"
 
   # Regex search, custom padding, only scan bottom-third of frame
@@ -327,7 +401,7 @@ Usage examples
   # Multiple hits concatenated into one file, re-encoded with NVENC
   vidgrep movie.mp4 --text "Chapter" --concat --reencode
 
-  # Faster scan: process every 5th frame, merge gaps ≤ 3 s, disable GPU
+  # Faster scan: process every 5th frame, merge gaps <= 3 s, disable GPU
   vidgrep long.mp4 --text "error" --skip-frames 5 --merge-gap 3 --no-gpu
 
   # Sample one frame every 2 s (frame-rate independent, much faster on long videos)

@@ -1,7 +1,9 @@
 """scan subcommand: scan video files for text matches and write paired JSONL + JSON output."""
+import hashlib
 import json
 import re
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
@@ -18,6 +20,49 @@ def _make_stem(pattern: str, now: datetime) -> str:
     safe_pattern = re.sub(r"[^\w\-]", "_", pattern)[:40]
     timestamp = now.strftime("%Y%m%d_%H%M%S")
     return f"scan_{safe_pattern}_{timestamp}"
+
+
+def _hash_json(value: dict) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _make_source_id(path: Path) -> str:
+    resolved = path.resolve()
+    stat = resolved.stat()
+    return _hash_json({
+        "path": str(resolved),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    })
+
+
+def _scan_options_id(args) -> str:
+    return _hash_json({
+        "text": args.text,
+        "threshold": args.threshold,
+        "skip_frames": args.skip_frames,
+        "interval": args.interval,
+        "region": list(args.region) if args.region else None,
+        "lang": args.lang,
+    })
+
+
+def _make_match_id(
+    *,
+    source_id: str,
+    scan_options_id: str,
+    timestamp: float,
+    text: str,
+    confidence: float,
+) -> str:
+    return _hash_json({
+        "source_id": source_id,
+        "scan_options_id": scan_options_id,
+        "timestamp": f"{timestamp:.3f}",
+        "text": text,
+        "confidence": f"{confidence:.4f}",
+    })
 
 
 def validate_video(path: Path) -> bool:
@@ -70,6 +115,7 @@ def run_scan(args) -> None:
     stem = args.output if args.output else _make_stem(args.text, started_at)
     jsonl_path = Path(stem).with_suffix(".jsonl")
     meta_path = Path(stem).with_suffix(".json")
+    options_id = _scan_options_id(args)
 
     use_gpu = not args.no_gpu
     languages = [lang.strip() for lang in args.lang.split(",")]
@@ -87,10 +133,21 @@ def run_scan(args) -> None:
                 continue
 
             resolved_path = str(video_path.resolve())
+            scan_id = str(uuid.uuid4())
+            source_id = _make_source_id(video_path)
 
             def write_match(m, _file=video_path.name, _path=resolved_path):
                 nonlocal match_count
                 record = {
+                    "match_id": _make_match_id(
+                        source_id=source_id,
+                        scan_options_id=options_id,
+                        timestamp=m["timestamp"],
+                        text=m["text"],
+                        confidence=m["confidence"],
+                    ),
+                    "scan_id": scan_id,
+                    "source_id": source_id,
                     "file": _file,
                     "path": _path,
                     "timestamp": m["timestamp"],

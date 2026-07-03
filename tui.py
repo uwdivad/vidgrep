@@ -35,8 +35,6 @@ else:
 
 COMPANION = r"""
  [o_o]
- /| |\
-  / \
 """
 
 
