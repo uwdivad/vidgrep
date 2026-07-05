@@ -318,6 +318,7 @@ class VideoClipper:
         on_match: Optional[Callable[[dict], None]] = None,
         show_progress: bool = True,
         on_progress: Optional[Callable[[int, int], None]] = None,
+        profile: Optional[dict] = None,
     ) -> List[dict]:
         """
         Iterate frames and return one dict per matched text region per frame:
@@ -331,11 +332,21 @@ class VideoClipper:
 
         batch_frames: List[np.ndarray] = []
         batch_times: List[float] = []
+        batch_count = 0
+        ocr_seconds = 0.0
+        sample_seconds = 0.0
+        batch_sizes: List[int] = []
 
         def _flush() -> None:
+            nonlocal batch_count, ocr_seconds
             if not batch_frames:
                 return
-            for t, found in zip(batch_times, detector.detect_matches_batch(batch_frames)):
+            batch_count += 1
+            batch_sizes.append(len(batch_frames))
+            ocr_started = time.perf_counter()
+            found_by_frame = detector.detect_matches_batch(batch_frames)
+            ocr_seconds += time.perf_counter() - ocr_started
+            for t, found in zip(batch_times, found_by_frame):
                 for m in found:
                     record = {
                         "timestamp": t,
@@ -351,9 +362,16 @@ class VideoClipper:
         started = time.perf_counter()
         sampled = 0
 
-        for t, crop in self._iter_samples(
+        samples = iter(self._iter_samples(
             skip_frames, region, show_progress=show_progress, on_progress=on_progress
-        ):
+        ))
+        while True:
+            sample_started = time.perf_counter()
+            try:
+                t, crop = next(samples)
+            except StopIteration:
+                break
+            sample_seconds += time.perf_counter() - sample_started
             batch_frames.append(crop)
             batch_times.append(round(t, 3))
             sampled += 1
@@ -365,6 +383,15 @@ class VideoClipper:
         if collect_stats:
             frames_covered = min(sampled * skip_frames, self.frame_count)
             self._print_stats(frames_covered, sampled, time.perf_counter() - started)
+
+        if profile is not None:
+            profile.update({
+                "sampled_frames": sampled,
+                "batch_count": batch_count,
+                "ocr_sec": round(ocr_seconds, 6),
+                "sample_read_sec": round(sample_seconds, 6),
+                "avg_batch_size": round(sum(batch_sizes) / len(batch_sizes), 2) if batch_sizes else 0.0,
+            })
 
         return matches
 

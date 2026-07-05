@@ -27,15 +27,21 @@ try:
         Static,
     )
     from textual.worker import get_current_worker
+    from rich.text import Text
 except ModuleNotFoundError as exc:
     TEXTUAL_IMPORT_ERROR: Optional[ModuleNotFoundError] = exc
 else:
     TEXTUAL_IMPORT_ERROR = None
 
 
-COMPANION = r"""
- [o_o]
-"""
+FACES = {
+    "ready": " [o_o]",
+    "busy": " [@_@]",
+    "ok": " [^_^]",
+    "error": " [x_x]",
+}
+
+STATE_GLYPHS = {"ready": "○", "busy": "●", "ok": "✓", "error": "✗"}
 
 
 @dataclass
@@ -202,20 +208,54 @@ if TEXTUAL_IMPORT_ERROR is None:
             width: 38;
             min-width: 34;
             height: 100%;
-            border: solid $primary;
-            padding: 1;
+            background: $boost;
+            padding: 1 2;
+        }
+
+        #config Label {
+            color: $text-muted;
+        }
+
+        .section {
+            color: $text-muted;
+            text-style: bold;
+            margin-top: 1;
+        }
+
+        .section.first {
+            margin-top: 0;
         }
 
         #dashboard {
             width: 1fr;
             height: 100%;
+            padding: 0 1;
         }
 
         #status {
             height: auto;
-            min-height: 6;
-            border: solid $accent;
-            padding: 1;
+            padding: 1 1 0 1;
+        }
+
+        #status_text.-busy {
+            color: $accent;
+        }
+
+        #status_text.-ok {
+            color: $success;
+        }
+
+        #status_text.-error {
+            color: $error;
+        }
+
+        #progress {
+            display: none;
+            margin: 1 1 0 1;
+        }
+
+        #progress.-active {
+            display: block;
         }
 
         #tables {
@@ -224,12 +264,18 @@ if TEXTUAL_IMPORT_ERROR is None:
 
         #intervals {
             height: 1fr;
-            border: solid $primary;
+        }
+
+        #empty {
+            height: 1fr;
+            content-align: center middle;
+            color: $text-muted;
         }
 
         #log {
             height: 10;
-            border: solid $primary;
+            border-top: solid $panel;
+            color: $text-muted;
         }
 
         Input {
@@ -249,9 +295,13 @@ if TEXTUAL_IMPORT_ERROR is None:
             width: 1fr;
         }
 
+        .half-l {
+            margin-right: 2;
+        }
+
         #companion {
             color: $text-muted;
-            width: 14;
+            width: 8;
             height: auto;
         }
 
@@ -263,8 +313,8 @@ if TEXTUAL_IMPORT_ERROR is None:
 
         BINDINGS = [
             Binding("q", "quit", "Quit"),
-            Binding("ctrl+s", "start_scan", "Scan"),
-            Binding("ctrl+e", "extract_all", "Extract All"),
+            Binding("f5", "start_scan", "Scan"),
+            Binding("ctrl+e", "extract_all", "Extract all"),
         ]
 
         def __init__(self, defaults: TuiDefaults):
@@ -278,30 +328,36 @@ if TEXTUAL_IMPORT_ERROR is None:
             yield Header(show_clock=True)
             with Horizontal(id="body"):
                 with Vertical(id="config"):
+                    yield Static("SOURCE", classes="section first")
                     yield Label("Input path")
                     yield Input(value=self.defaults.input_path, id="input_path")
                     yield Label("Text pattern")
                     yield Input(value=self.defaults.text, id="pattern")
-                    yield Label("Output path/stem")
-                    yield Input(id="output")
                     yield Label("Region X Y W H")
                     yield Input(value=self.defaults.region, id="region")
+                    yield Static("SAMPLING", classes="section")
                     with Horizontal():
-                        with Vertical(classes="half"):
+                        with Vertical(classes="half half-l"):
                             yield Label("Interval seconds")
                             yield Input(value=self.defaults.interval, id="interval")
                         with Vertical(classes="half"):
                             yield Label("Skip frames")
                             yield Input(value="3", id="skip_frames")
                     with Horizontal():
-                        with Vertical(classes="half"):
+                        with Vertical(classes="half half-l"):
                             yield Label("Threshold")
                             yield Input(value="0.5", id="threshold")
                         with Vertical(classes="half"):
                             yield Label("Batch size")
                             yield Input(value="8", id="batch_size")
+                    yield Label("Language codes")
+                    yield Input(value="en", id="language")
+                    yield Checkbox("Disable GPU", value=self.defaults.no_gpu, id="no_gpu")
+                    yield Static("OUTPUT", classes="section")
+                    yield Label("Output path/stem")
+                    yield Input(id="output")
                     with Horizontal():
-                        with Vertical(classes="half"):
+                        with Vertical(classes="half half-l"):
                             yield Label("Padding")
                             yield Input(value="5", id="padding")
                         with Vertical(classes="half"):
@@ -309,31 +365,33 @@ if TEXTUAL_IMPORT_ERROR is None:
                             yield Input(value="2", id="merge_gap")
                     yield Label("Minimum duration")
                     yield Input(value="0", id="min_duration")
-                    yield Label("Language codes")
-                    yield Input(value="en", id="language")
-                    yield Checkbox("Disable GPU", value=self.defaults.no_gpu, id="no_gpu")
                     yield Checkbox("Concat clips", id="concat")
                     yield Checkbox("Re-encode NVENC", id="reencode")
                     yield Checkbox("Lossless libx264", id="lossless")
                     yield Button("Scan", variant="primary", id="scan")
-                    yield Button("Extract selected interval", id="extract_selected", disabled=True)
-                    yield Button("Extract all intervals", id="extract_all", disabled=True)
+                    yield Button("Extract selected", id="extract_selected", disabled=True)
+                    yield Button("Extract all", id="extract_all", disabled=True)
                 with Vertical(id="dashboard"):
                     with Horizontal(id="status"):
-                        yield Static(COMPANION, id="companion")
-                        yield Static("Ready. Configure a text scan and press Scan.", id="status_text")
+                        yield Static(FACES["ready"], id="companion")
+                        yield Static("", id="status_text")
                     yield ProgressBar(total=100, id="progress")
+                    yield Static("INTERVALS", classes="section")
                     with Vertical(id="tables"):
                         yield DataTable(id="intervals")
+                        yield Static("", id="empty")
+                    yield Static("LOG", classes="section")
                     yield RichLog(id="log", wrap=True, highlight=False)
             yield Footer()
 
         def on_mount(self) -> None:
             table = self.query_one("#intervals", DataTable)
-            table.add_columns("File", "Start", "End", "Hits", "Best", "Text")
+            table.add_columns("FILE", "START", "END", "HITS", "BEST", "TEXT")
             table.cursor_type = "row"
             table.zebra_stripes = True
             self.query_one("#progress", ProgressBar).update(progress=0, total=100)
+            self._set_status("Ready — set an input and pattern, then press F5 or Scan.")
+            self._show_empty("No intervals yet.")
 
         def action_start_scan(self) -> None:
             self._start_scan()
@@ -365,7 +423,7 @@ if TEXTUAL_IMPORT_ERROR is None:
             try:
                 job = self._read_job()
             except ValueError as exc:
-                self._set_status(f"Config error: {exc}")
+                self._set_status(f"Config error: {exc}", tone="error")
                 self._log(f"Config error: {exc}")
                 return
 
@@ -376,9 +434,12 @@ if TEXTUAL_IMPORT_ERROR is None:
             self.query_one("#extract_selected", Button).disabled = True
             self.query_one("#extract_all", Button).disabled = True
             self.query_one("#intervals", DataTable).clear()
-            self.query_one("#progress", ProgressBar).update(progress=0, total=100)
+            progress = self.query_one("#progress", ProgressBar)
+            progress.update(progress=0, total=100)
+            progress.add_class("-active")
             self.query_one("#log", RichLog).clear()
-            self._set_status("Scanning...")
+            self._set_status("Scanning...", tone="busy")
+            self._show_empty("Scanning — intervals appear when the scan completes.")
             self._log("Scan started.")
             self.run_scan(job)
 
@@ -543,7 +604,7 @@ if TEXTUAL_IMPORT_ERROR is None:
                 return
             self.query_one("#extract_selected", Button).disabled = True
             self.query_one("#extract_all", Button).disabled = True
-            self._set_status(f"Extracting {len(intervals)} interval(s)...")
+            self._set_status(f"Extracting {len(intervals)} interval(s)...", tone="busy")
             self.extract_intervals(self.last_job, intervals)
 
         def on_log_message(self, message: LogMessage) -> None:
@@ -557,7 +618,10 @@ if TEXTUAL_IMPORT_ERROR is None:
             )
 
         def on_file_message(self, message: FileMessage) -> None:
-            self._set_status(f"Scanning {message.index}/{message.total}: {message.path.name}")
+            self._set_status(
+                f"Scanning {message.index}/{message.total}: {message.path.name}",
+                tone="busy",
+            )
             self._log(f"Scanning {message.path}")
 
         def on_match_message(self, message: MatchMessage) -> None:
@@ -575,39 +639,65 @@ if TEXTUAL_IMPORT_ERROR is None:
             for interval in self.state.intervals:
                 table.add_row(
                     interval.video_path.name,
-                    f"{interval.start:.2f}",
-                    f"{interval.end:.2f}",
-                    str(interval.match_count),
-                    f"{interval.best_confidence:.2f}",
+                    Text(f"{interval.start:.2f}", justify="right"),
+                    Text(f"{interval.end:.2f}", justify="right"),
+                    Text(str(interval.match_count), justify="right"),
+                    Text(f"{interval.best_confidence:.2f}", justify="right"),
                     interval.sample_text,
                 )
+            self.query_one("#progress", ProgressBar).remove_class("-active")
             self.query_one("#scan", Button).disabled = False
             has_intervals = bool(self.state.intervals)
             self.query_one("#extract_selected", Button).disabled = not has_intervals
             self.query_one("#extract_all", Button).disabled = not has_intervals
+            if has_intervals:
+                self._show_empty(None)
+            else:
+                self._show_empty("Scan finished with no matches.")
             self._set_status(
                 f"Scan complete: {len(self.state.matches)} match(es), "
-                f"{len(self.state.intervals)} interval(s)."
+                f"{len(self.state.intervals)} interval(s).",
+                tone="ok",
             )
             self._log("Scan complete.")
 
         def on_extract_complete_message(self, message: ExtractCompleteMessage) -> None:
             self.query_one("#extract_selected", Button).disabled = not self.state.intervals
             self.query_one("#extract_all", Button).disabled = not self.state.intervals
-            self._set_status(f"Extracted {len(message.paths)} clip(s).")
+            self._set_status(f"Extracted {len(message.paths)} clip(s).", tone="ok")
             for path in message.paths:
                 self._log(f"Saved: {path}")
 
         def on_failure_message(self, message: FailureMessage) -> None:
             self.scanning = False
+            self.query_one("#progress", ProgressBar).remove_class("-active")
             self.query_one("#scan", Button).disabled = False
             self.query_one("#extract_selected", Button).disabled = not self.state.intervals
             self.query_one("#extract_all", Button).disabled = not self.state.intervals
-            self._set_status(f"Error: {message.text}")
+            if not self.state.intervals:
+                self._show_empty("No intervals yet.")
+            self._set_status(f"Error: {message.text}", tone="error")
             self._log(f"Error: {message.text}")
 
-        def _set_status(self, text: str) -> None:
-            self.query_one("#status_text", Static).update(text)
+        def _set_status(self, text: str, tone: str = "ready") -> None:
+            status = self.query_one("#status_text", Static)
+            for name in ("-busy", "-ok", "-error"):
+                status.remove_class(name)
+            if tone != "ready":
+                status.add_class(f"-{tone}")
+            status.update(f"{STATE_GLYPHS[tone]} {text}")
+            self.query_one("#companion", Static).update(FACES[tone])
+
+        def _show_empty(self, text: Optional[str]) -> None:
+            empty = self.query_one("#empty", Static)
+            table = self.query_one("#intervals", DataTable)
+            if text is None:
+                empty.display = False
+                table.display = True
+            else:
+                empty.update(text)
+                empty.display = True
+                table.display = False
 
         def _log(self, text: str) -> None:
             self.query_one("#log", RichLog).write(text)

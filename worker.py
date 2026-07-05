@@ -91,6 +91,13 @@ def _output_stem_for(args, csv_path: Path, row_index: int, video_path: Path) -> 
     return output_dir / f"{row_index:06d}_{_sanitize_stem(video_path.stem)}"
 
 
+def _metrics_path_for(args, output_stem: Path) -> Path:
+    raw_path = getattr(args, "metrics_output", None)
+    if raw_path:
+        return Path(raw_path)
+    return output_stem.parent / "profile.csv"
+
+
 def _mark_attempt_started(row: dict, output_stem: Path) -> None:
     row["processed"] = "false"
     row["last_attempt_at"] = _now()
@@ -131,7 +138,7 @@ def _build_detector(args):
 
 
 def _run_scan_job(args, video_path: Path, output_stem: Path, detector, options_id: str) -> int:
-    from scan import scan_metadata, scan_video
+    from scan import scan_metadata, scan_video, write_profile_metrics
 
     started_at = datetime.now(timezone.utc)
     jsonl_path = output_stem.with_suffix(".jsonl")
@@ -143,7 +150,7 @@ def _run_scan_job(args, video_path: Path, output_stem: Path, detector, options_i
             jsonl_file.write(json.dumps(record) + "\n")
             jsonl_file.flush()
 
-        match_count = scan_video(
+        match_count, profile_row = scan_video(
             video_path=video_path,
             detector=detector,
             args=args,
@@ -158,6 +165,11 @@ def _run_scan_job(args, video_path: Path, output_stem: Path, detector, options_i
         files_scanned=1,
         match_count=match_count,
     )
+    if profile_row is not None:
+        metrics_path = _metrics_path_for(args, output_stem)
+        write_profile_metrics(metrics_path, [profile_row])
+        metadata["profile_metrics"] = str(metrics_path)
+        metadata["profile"] = profile_row
     meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return match_count
 

@@ -1,6 +1,6 @@
 import pytest
 
-from args import build_agent_parser, build_inventory_parser, build_worker_parser
+from args import build_agent_parser, build_inventory_parser, build_scan_parser, build_worker_parser
 
 
 def test_inventory_parser_accepts_regex_scope():
@@ -25,6 +25,32 @@ def test_worker_parser_minimum_required_arguments():
     assert args.text == "uwdivad"
     assert args.force is False
     assert args.skip_frames == 3
+    assert args.profile is False
+    assert args.metrics_output is None
+
+
+def test_scan_and_worker_accept_profile_metrics_output():
+    scan_args = build_scan_parser().parse_args([
+        "clip.mp4",
+        "--text",
+        "uwdivad",
+        "--profile",
+        "--metrics-output",
+        "scan_metrics.csv",
+    ])
+    worker_args = build_worker_parser().parse_args([
+        "videos.csv",
+        "--text",
+        "uwdivad",
+        "--profile",
+        "--metrics-output",
+        "worker_metrics.jsonl",
+    ])
+
+    assert scan_args.profile is True
+    assert scan_args.metrics_output == "scan_metrics.csv"
+    assert worker_args.profile is True
+    assert worker_args.metrics_output == "worker_metrics.jsonl"
 
 
 def test_agent_parser_minimum_required_arguments():

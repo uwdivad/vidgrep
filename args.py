@@ -139,6 +139,14 @@ def build_scan_parser() -> argparse.ArgumentParser:
         help="Print decode/detect throughput (fps, x-realtime) after each scan",
     )
     p.add_argument(
+        "--profile", action="store_true",
+        help="Record per-video profiling metrics for decode/sample, OCR, and writes",
+    )
+    p.add_argument(
+        "--metrics-output", metavar="PATH",
+        help="Metrics output path for --profile (default: <output_stem>.profile.csv)",
+    )
+    p.add_argument(
         "--threshold", type=float, default=0.5, metavar="0-1",
         help="Min OCR confidence to count as a match (default: 0.5)",
     )
@@ -251,6 +259,14 @@ def build_worker_parser() -> argparse.ArgumentParser:
         "--stats", action="store_true",
         help="Print decode/detect throughput for each scan",
     )
+    p.add_argument(
+        "--profile", action="store_true",
+        help="Record per-video profiling metrics for decode/sample, OCR, and writes",
+    )
+    p.add_argument(
+        "--metrics-output", metavar="PATH",
+        help="Metrics output path for --profile (default: <output_dir>/profile.csv)",
+    )
     return p
 
 
@@ -332,6 +348,9 @@ Usage examples
   # Process each unprocessed row in an inventory CSV
   vidgrep worker videos.csv --text "uwdivad" --region 132 476 592 388 --interval 2 --batch-size 16 --stats
 
+  # Record per-video profiling metrics while tuning throughput
+  vidgrep worker videos.csv --text "uwdivad" --batch-size 32 --profile --metrics-output metrics.csv
+
   # Put per-video JSONL/JSON output under a named directory
   vidgrep worker cod_videos.csv --text "GOAL" --output-dir cod_ocr
 
@@ -380,6 +399,9 @@ Usage examples
 
   # Sample one frame every 2 s instead of every Nth frame
   vidgrep scan game1.mp4 --text "GOAL" --interval 2
+
+  # Record per-video profiling metrics for batch-size tuning
+  vidgrep scan game1.mp4 --text "GOAL" --batch-size 32 --profile --metrics-output metrics.csv
 """
 
 

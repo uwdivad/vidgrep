@@ -20,6 +20,8 @@ def _args(csv_path, **overrides):
         "lang": "en",
         "no_gpu": False,
         "stats": False,
+        "profile": False,
+        "metrics_output": None,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -68,7 +70,7 @@ def test_run_scan_job_writes_jsonl_and_metadata(tmp_path, monkeypatch):
             "text": "uwdivad enemy",
             "confidence": 0.9,
         })
-        return 1
+        return 1, None
 
     monkeypatch.setattr("scan.scan_video", fake_scan_video)
 
@@ -195,3 +197,32 @@ def test_run_worker_reuses_detector_for_multiple_rows(tmp_path, monkeypatch):
     assert detector_builds == ["uwdivad"]
     assert len(detectors_used) == 2
     assert detectors_used[0] is detectors_used[1]
+
+
+def test_run_scan_job_writes_profile_metrics(tmp_path, monkeypatch):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_text("", encoding="utf-8")
+    output_stem = tmp_path / "out" / "clip"
+    metrics_path = tmp_path / "metrics.csv"
+    args = _args(tmp_path / "videos.csv", profile=True, metrics_output=str(metrics_path))
+
+    def fake_scan_video(*, video_path, detector, args, options_id, on_record):
+        return 0, {
+            "started_at": "2026-07-04T00:00:00+00:00",
+            "completed_at": "2026-07-04T00:00:01+00:00",
+            "path": str(video_path),
+            "file": video_path.name,
+            "batch_size": args.batch_size,
+            "match_count": 0,
+            "detect_fps": 12.5,
+        }
+
+    monkeypatch.setattr("scan.scan_video", fake_scan_video)
+
+    worker._run_scan_job(args, video_path, output_stem, object(), "options-1")
+
+    rows = list(csv.DictReader(metrics_path.open(newline="", encoding="utf-8")))
+    metadata = json.loads(output_stem.with_suffix(".json").read_text(encoding="utf-8"))
+    assert rows[0]["file"] == "clip.mp4"
+    assert rows[0]["detect_fps"] == "12.5"
+    assert metadata["profile_metrics"] == str(metrics_path)
