@@ -75,6 +75,13 @@ def _fallback_match_id(row: dict) -> str:
     })
 
 
+def _options_fingerprint(args) -> str:
+    return _hash_json({
+        "search_term": args.search_term,
+        "openai_model": args.openai_model,
+    })
+
+
 def _output_paths(input_path: Path, output: Optional[str]) -> tuple[Path, Path, Path]:
     if output:
         stem = Path(output)
@@ -280,6 +287,7 @@ def _canonicalize_missing(
     canonicalizer: OpenAICanonicalizer,
     cache: dict,
     batch_size: int,
+    on_batch_done: Optional[callable] = None,
 ) -> int:
     pending_by_key: dict[str, dict] = {}
     for row in rows:
@@ -293,13 +301,34 @@ def _canonicalize_missing(
 
     completed = 0
     for batch in _chunks(list(pending_by_key.values()), batch_size):
+        requested = {item["input_id"] for item in batch}
+        answered: set[str] = set()
         for result in canonicalizer.canonicalize(search_term=search_term, items=batch):
+            # Only trust ids we actually sent; a hallucinated id would become
+            # a permanent bogus cache entry.
+            if result.input_id not in requested:
+                print(
+                    f"Warning: ignoring unrequested input_id in OpenAI response: {result.input_id!r}",
+                    file=sys.stderr,
+                )
+                continue
             cache[result.input_id] = {
                 "anchor_present": result.anchor_present,
                 "canonical_label": result.canonical_label,
                 "normalized_line": result.normalized_line,
             }
+            answered.add(result.input_id)
             completed += 1
+        omitted = requested - answered
+        if omitted:
+            print(
+                f"Warning: OpenAI response omitted {len(omitted)} item(s); they will be retried.",
+                file=sys.stderr,
+            )
+        # Persist after every batch so a later failure doesn't discard
+        # canonicalizations that were already paid for.
+        if on_batch_done is not None:
+            on_batch_done()
     return completed
 
 
@@ -428,6 +457,15 @@ def _process_once(args, *, started_at: str) -> tuple[int, int]:
 
     out_jsonl, out_meta, state_path = _output_paths(input_path, args.output)
     state = _load_state(state_path)
+    fingerprint = _options_fingerprint(args)
+    if state.get("options_fingerprint") != fingerprint:
+        if state["canonical_cache"]:
+            print(
+                "Search term or model changed — discarding cached canonicalizations.",
+                flush=True,
+            )
+        state["canonical_cache"] = {}
+        state["options_fingerprint"] = fingerprint
     cache = state["canonical_cache"]
     rows = _read_input_rows(input_path)
     if args.force:
@@ -441,18 +479,20 @@ def _process_once(args, *, started_at: str) -> tuple[int, int]:
                 "Error: OPENAI_API_KEY is required for uncached OCR text canonicalization."
             )
         canonicalizer = OpenAICanonicalizer(api_key=api_key, model=args.openai_model)
-        try:
-            completed = _canonicalize_missing(
-                rows,
-                search_term=args.search_term,
-                canonicalizer=canonicalizer,
-                cache=cache,
-                batch_size=args.batch_size,
-            )
-        except RuntimeError as exc:
-            sys.exit(f"Error: {exc}")
-        state["updated_at"] = _now()
-        _write_state(state_path, state)
+
+        def save_state() -> None:
+            state["updated_at"] = _now()
+            _write_state(state_path, state)
+
+        completed = _canonicalize_missing(
+            rows,
+            search_term=args.search_term,
+            canonicalizer=canonicalizer,
+            cache=cache,
+            batch_size=args.batch_size,
+            on_batch_done=save_state,
+        )
+        save_state()
         print(f"Canonicalized {completed} OCR line variant(s).", flush=True)
 
     groups = group_rows(rows, cache, merge_gap=args.merge_gap)
@@ -476,8 +516,16 @@ def _process_once(args, *, started_at: str) -> tuple[int, int]:
 def run_agent(args) -> None:
     started_at = _now()
     while True:
-        match_count, group_count = _process_once(args, started_at=started_at)
-        print(f"Wrote {group_count} group(s) from {match_count} match row(s).", flush=True)
+        try:
+            match_count, group_count = _process_once(args, started_at=started_at)
+        except RuntimeError as exc:
+            # Completed batches are already saved to the state file, so a
+            # transient API failure only delays the remaining work.
+            if not args.watch:
+                sys.exit(f"Error: {exc}")
+            print(f"Error: {exc} — retrying on next poll.", file=sys.stderr, flush=True)
+        else:
+            print(f"Wrote {group_count} group(s) from {match_count} match row(s).", flush=True)
         if not args.watch:
             return
         time.sleep(args.poll_interval)

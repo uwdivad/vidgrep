@@ -5,6 +5,7 @@ import os
 import re
 import string
 import sys
+import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,9 +66,23 @@ def default_stem(now: datetime) -> str:
 
 def local_roots() -> list[Path]:
     if os.name == "nt":
-        roots = [Path(f"{letter}:\\") for letter in string.ascii_uppercase]
-        return [root for root in roots if root.exists()]
+        return [
+            root
+            for letter in string.ascii_uppercase
+            if (root := Path(f"{letter}:\\")).exists() and _is_local_drive(root)
+        ]
     return [Path("/")]
+
+
+def _is_local_drive(root: Path) -> bool:
+    """True for fixed and removable drives; excludes network/CD-ROM/RAM."""
+    DRIVE_REMOVABLE, DRIVE_FIXED = 2, 3
+    try:
+        import ctypes
+        drive_type = ctypes.windll.kernel32.GetDriveTypeW(str(root))
+    except (ImportError, AttributeError, OSError):
+        return True
+    return drive_type in (DRIVE_REMOVABLE, DRIVE_FIXED)
 
 
 def resolve_roots(raw_roots: Optional[list[str]]) -> list[Path]:
@@ -175,10 +190,22 @@ def _regex_matches(path: Path, pattern: re.Pattern[str], scope: str) -> bool:
 def write_csv(path: Path, records: list[VideoRecord]) -> list[dict]:
     path.parent.mkdir(parents=True, exist_ok=True)
     rows, fieldnames = _merge_existing_csv(path, records)
-    with path.open("w", newline="", encoding="utf-8") as fh:
+    # Write to a temp file and replace atomically: this CSV carries the
+    # worker's processed flags, so an interrupted rewrite must not destroy it.
+    with tempfile.NamedTemporaryFile(
+        "w",
+        newline="",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as fh:
+        tmp_path = Path(fh.name)
         writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
+    tmp_path.replace(path)
     return rows
 
 

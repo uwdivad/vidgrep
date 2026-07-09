@@ -11,6 +11,19 @@ import numpy as np
 from tqdm import tqdm
 
 
+def _clamp_region(
+    region: Tuple[int, int, int, int], w: int, h: int
+) -> Tuple[int, int, int, int]:
+    """Clamp a crop box to frame bounds so negative or oversized values
+    can't abort FFmpeg's crop filter or silently produce a wrong numpy slice."""
+    x, y, rw, rh = region
+    x = max(0, min(x, w - 1))
+    y = max(0, min(y, h - 1))
+    rw = max(1, min(rw, w - x))
+    rh = max(1, min(rh, h - y))
+    return x, y, rw, rh
+
+
 class _SWCapture:
     """
     Frame reader that pipes raw BGR frames from an FFmpeg subprocess with
@@ -74,13 +87,7 @@ class _FFSampler:
     ):
         vf = f"select=not(mod(n\\,{skip_frames}))"
         if region:
-            # Clamp like numpy slicing does so out-of-range regions don't
-            # make the crop filter abort.
-            x, y, rw, rh = region
-            x = max(0, min(x, w - 1))
-            y = max(0, min(y, h - 1))
-            rw = max(1, min(rw, w - x))
-            rh = max(1, min(rh, h - y))
+            x, y, rw, rh = _clamp_region(region, w, h)
             vf += f",crop={rw}:{rh}:{x}:{y}"
             out_w, out_h = rw, rh
         else:
@@ -133,6 +140,9 @@ class VideoClipper:
             raise ValueError(f"Cannot open video: {path}")
 
         self.fps: float = cap.get(cv2.CAP_PROP_FPS)
+        if not self.fps or self.fps <= 0:
+            cap.release()
+            raise ValueError(f"Cannot determine frame rate: {path}")
         self.frame_count: int = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.duration: float = self.frame_count / self.fps
         self._w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -174,6 +184,9 @@ class VideoClipper:
         FFmpeg and never piped or converted); falls back to in-process
         decoding with grab() past skipped frames if that isn't available.
         """
+        if region:
+            region = _clamp_region(region, self._w, self._h)
+
         sampler = None
         if skip_frames > 1:
             try:
@@ -473,7 +486,7 @@ class VideoClipper:
             # Stream-copy is fast and bit-for-bit lossless, but cuts snap to
             # the nearest keyframe (~2s inaccuracy).  Use --lossless or
             # --reencode for frame-accurate cuts.
-            cmd += ["-c", "copy"]
+            cmd += ["-c", "copy", "-avoid_negative_ts", "make_zero"]
         cmd.append(output)
         self._run(cmd)
 

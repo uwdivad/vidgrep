@@ -1,5 +1,6 @@
 import csv
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import worker
@@ -197,6 +198,65 @@ def test_run_worker_reuses_detector_for_multiple_rows(tmp_path, monkeypatch):
     assert detector_builds == ["uwdivad"]
     assert len(detectors_used) == 2
     assert detectors_used[0] is detectors_used[1]
+
+
+def test_run_worker_reprocesses_row_when_options_change(tmp_path, monkeypatch):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_text("", encoding="utf-8")
+    csv_path = tmp_path / "videos.csv"
+    _write_rows(
+        csv_path,
+        [{"path": str(video_path), "processed": "true", "options_id": "old-options"}],
+        fieldnames=["path", "processed", "options_id"],
+    )
+    calls = []
+
+    def fake_run_scan_job(args, video_path, output_stem, detector, options_id):
+        calls.append(options_id)
+        Path(f"{output_stem}.json").write_text(
+            json.dumps({"match_count": 0}), encoding="utf-8"
+        )
+        return 0
+
+    monkeypatch.setattr(worker, "_build_detector", lambda args: "detector")
+    monkeypatch.setattr(worker, "_run_scan_job", fake_run_scan_job)
+
+    worker.run_worker(_args(csv_path, text="different-pattern"))
+
+    rows = _read_rows(csv_path)
+    assert len(calls) == 1
+    assert rows[0]["processed"] == "true"
+    assert rows[0]["options_id"] == calls[0]
+    assert rows[0]["options_id"] != "old-options"
+
+
+def test_run_worker_skips_legacy_processed_row_without_options_id(tmp_path, monkeypatch):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_text("", encoding="utf-8")
+    csv_path = tmp_path / "videos.csv"
+    _write_rows(csv_path, [{"path": str(video_path), "processed": "true"}])
+    calls = []
+
+    monkeypatch.setattr(worker, "_build_detector", lambda args: "detector")
+    monkeypatch.setattr(
+        worker, "_run_scan_job", lambda *a, **k: calls.append(a) or 0
+    )
+
+    worker.run_worker(_args(csv_path))
+
+    assert calls == []
+
+
+def test_output_stem_is_stable_across_row_reordering(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    args = _args(tmp_path / "videos.csv", output_dir=str(tmp_path / "out"))
+
+    first = worker._output_stem_for(args, tmp_path / "videos.csv", video_path)
+    second = worker._output_stem_for(args, tmp_path / "videos.csv", video_path)
+    other = worker._output_stem_for(args, tmp_path / "videos.csv", tmp_path / "b" / "clip.mp4")
+
+    assert first == second
+    assert first != other
 
 
 def test_run_scan_job_writes_profile_metrics(tmp_path, monkeypatch):

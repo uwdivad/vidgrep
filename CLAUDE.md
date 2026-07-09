@@ -39,7 +39,7 @@ FFmpeg and ffprobe must be available on `PATH`.
 
 ```bash
 python -m pytest
-python -m py_compile main.py args.py clipper.py detector.py scan.py inventory.py worker.py select_region.py tui.py
+python -m py_compile main.py args.py agent.py clipper.py detector.py scan.py inventory.py worker.py select_region.py tui.py
 ```
 
 The unit tests cover parser, inventory, and worker CSV behavior without invoking
@@ -75,8 +75,12 @@ Flat modules with setuptools console scripts in `pyproject.toml`:
   JSONL writes, and summary JSON metadata.
 - **`inventory.py`** — drive/directory video inventory by extension, with CSV
   records and JSON metadata/totals/skipped path details.
-- **`worker.py`** — resumable CSV-backed OCR queue runner that shells out to
-  `main.py scan`, streams output, and updates `processed` status in place.
+- **`worker.py`** — resumable CSV-backed OCR queue runner that scans in-process
+  via `scan.scan_video`, writes per-video JSONL/JSON output, and updates
+  `processed` status (plus the scan `options_id`) in the CSV in place.
+- **`agent.py`** — `agent` subcommand: groups scan JSONL rows into canonical
+  text intervals using the OpenAI API, caching canonicalizations in a
+  `.agent.state.json` keyed to the search term and model.
 - **`select_region.py`** — interactive helper exposed as `vidgrep-region`.
 - **`tui.py`** — optional Textual dashboard exposed as `vidgrep-tui`; uses
   callbacks from `VideoClipper` and detectors instead of parsing console output.
@@ -103,5 +107,10 @@ Flat modules with setuptools console scripts in `pyproject.toml`:
 - Inventory `--name` filters filenames by substring. Inventory `--regex` is
   case-insensitive and can match filename, directory, or both.
 - Inventory CSVs include `processed=false`; the worker sets it to `true` only on
-  successful scans. Failed rows remain false and are retried on resume. Reserve
-  `agent` naming for a future AI layer over JSONL outputs.
+  successful scans and records the scan `options_id`. Rows processed with
+  different scan options (text/region/interval/…) are re-scanned; legacy rows
+  without an `options_id` are trusted as done. Failed rows remain false and are
+  retried on resume.
+- `vidgrep agent` needs `OPENAI_API_KEY` (loaded from `--env-file`, default
+  `.env`). Its canonicalization cache is invalidated automatically when
+  `--search-term` or `--openai-model` changes; `--force` clears it manually.

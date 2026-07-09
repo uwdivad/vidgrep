@@ -38,3 +38,17 @@ videos.json
 *_videos.csv
 *_videos.json
 *_ocr/
+
+# Generated scan / agent / profiling outputs
+scan_*.jsonl
+scan_*.json
+*.agent.jsonl
+*.agent.json
+*.agent.state.json
+*.profile.csv
+metrics.csv
+smoke.json
+smoke.jsonl
+
+# Tooling artifacts
+.playwright-mcp/

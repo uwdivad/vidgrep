@@ -1,5 +1,6 @@
 """Resumable CSV-backed OCR scan worker."""
 import csv
+import hashlib
 import json
 import re
 import sys
@@ -11,6 +12,7 @@ from typing import Optional
 
 JOB_COLUMNS = [
     "processed",
+    "options_id",
     "last_attempt_at",
     "completed_at",
     "output_stem",
@@ -85,10 +87,14 @@ def _read_match_count(json_path: Path) -> str:
     return str(data.get("match_count", ""))
 
 
-def _output_stem_for(args, csv_path: Path, row_index: int, video_path: Path) -> Path:
-    output_dir = Path(args.output_dir) if args.output_dir else csv_path.with_suffix("").parent / f"{csv_path.stem}_ocr"
+def _output_stem_for(args, csv_path: Path, video_path: Path) -> Path:
+    output_dir = Path(args.output_dir) if args.output_dir else csv_path.parent / f"{csv_path.stem}_ocr"
     output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir / f"{row_index:06d}_{_sanitize_stem(video_path.stem)}"
+    # Key the stem to the video path, not the CSV row index: inventory merges
+    # can reorder or insert rows, which would remap index-based stems onto the
+    # wrong videos.
+    digest = hashlib.sha256(str(video_path).casefold().encode("utf-8")).hexdigest()[:12]
+    return output_dir / f"{digest}_{_sanitize_stem(video_path.stem)}"
 
 
 def _metrics_path_for(args, output_stem: Path) -> Path:
@@ -98,13 +104,14 @@ def _metrics_path_for(args, output_stem: Path) -> Path:
     return output_stem.parent / "profile.csv"
 
 
-def _mark_attempt_started(row: dict, output_stem: Path) -> None:
+def _mark_attempt_started(row: dict, output_stem: Path, options_id: str) -> None:
     row["processed"] = "false"
+    row["options_id"] = options_id
     row["last_attempt_at"] = _now()
     row["completed_at"] = ""
     row["output_stem"] = str(output_stem)
-    row["jsonl_path"] = str(output_stem.with_suffix(".jsonl"))
-    row["json_path"] = str(output_stem.with_suffix(".json"))
+    row["jsonl_path"] = f"{output_stem}.jsonl"
+    row["json_path"] = f"{output_stem}.json"
     row["match_count"] = ""
     row["exit_code"] = ""
     row["error"] = ""
@@ -115,7 +122,7 @@ def _mark_success(row: dict, output_stem: Path, exit_code: int) -> None:
     row["completed_at"] = _now()
     row["exit_code"] = str(exit_code)
     row["error"] = ""
-    row["match_count"] = _read_match_count(output_stem.with_suffix(".json"))
+    row["match_count"] = _read_match_count(Path(f"{output_stem}.json"))
 
 
 def _mark_failure(row: dict, exit_code: Optional[int], error: str) -> None:
@@ -141,8 +148,8 @@ def _run_scan_job(args, video_path: Path, output_stem: Path, detector, options_i
     from scan import scan_metadata, scan_video, write_profile_metrics
 
     started_at = datetime.now(timezone.utc)
-    jsonl_path = output_stem.with_suffix(".jsonl")
-    meta_path = output_stem.with_suffix(".json")
+    jsonl_path = Path(f"{output_stem}.jsonl")
+    meta_path = Path(f"{output_stem}.json")
     jsonl_path.parent.mkdir(parents=True, exist_ok=True)
 
     with jsonl_path.open("w", encoding="utf-8") as jsonl_file:
@@ -192,7 +199,14 @@ def run_worker(args) -> None:
     options_id = _scan_options_id(args)
 
     for index, row in enumerate(rows, 1):
-        if _is_processed(row) and not args.force:
+        # A processed row only counts as done for the options it was scanned
+        # with; a legacy row without options_id is trusted as done.
+        row_options = (row.get("options_id") or "").strip()
+        if (
+            _is_processed(row)
+            and not args.force
+            and (not row_options or row_options == options_id)
+        ):
             skipped_done += 1
             continue
         if args.limit is not None and attempted >= args.limit:
@@ -201,8 +215,8 @@ def run_worker(args) -> None:
         attempted += 1
         raw_path = (row.get("path") or "").strip()
         video_path = Path(raw_path)
-        output_stem = _output_stem_for(args, csv_path, index, video_path)
-        _mark_attempt_started(row, output_stem)
+        output_stem = _output_stem_for(args, csv_path, video_path)
+        _mark_attempt_started(row, output_stem, options_id)
         _write_csv(csv_path, rows, fieldnames)
 
         print(f"\n[{index}/{len(rows)}] {raw_path}", flush=True)

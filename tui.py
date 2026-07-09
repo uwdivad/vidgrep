@@ -96,7 +96,10 @@ def _parse_region(value: str) -> Optional[tuple[int, int, int, int]]:
     parts = value.replace(",", " ").split()
     if len(parts) != 4:
         raise ValueError("region must be four integers: X Y W H")
-    return tuple(int(part) for part in parts)
+    x, y, w, h = (int(part) for part in parts)
+    if x < 0 or y < 0 or w < 1 or h < 1:
+        raise ValueError("region X/Y must be >= 0 and W/H must be >= 1")
+    return (x, y, w, h)
 
 
 def _parse_optional_float(value: str) -> Optional[float]:

@@ -289,8 +289,10 @@ def run_scan(args) -> None:
     print(f"Found {len(all_video_files)} video file(s) to scan.")
 
     stem = args.output if args.output else _make_stem(args.text, started_at)
-    jsonl_path = Path(stem).with_suffix(".jsonl")
-    meta_path = Path(stem).with_suffix(".json")
+    # Append extensions rather than with_suffix() so a stem containing dots
+    # (e.g. --output results.v2) doesn't lose part of its name.
+    jsonl_path = Path(f"{stem}.jsonl")
+    meta_path = Path(f"{stem}.json")
     metrics_path = _metrics_path(args, Path(stem))
     options_id = _scan_options_id(args)
 
