@@ -1,6 +1,12 @@
 import pytest
 
-from args import build_agent_parser, build_inventory_parser, build_scan_parser, build_worker_parser
+from args import (
+    build_agent_parser,
+    build_inventory_parser,
+    build_parser,
+    build_scan_parser,
+    build_worker_parser,
+)
 
 
 def test_inventory_parser_accepts_regex_scope():
@@ -63,3 +69,19 @@ def test_agent_parser_minimum_required_arguments():
     assert args.env_file == ".env"
     assert args.no_env_override is False
     assert args.force is False
+
+
+@pytest.mark.parametrize(
+    ("parser", "argv"),
+    [
+        (build_parser, ["clip.mp4", "--text", "goal", "--skip-frames", "0"]),
+        (build_parser, ["clip.mp4", "--text", "goal", "--interval", "-1"]),
+        (build_scan_parser, ["clip.mp4", "--text", "goal", "--batch-size", "0"]),
+        (build_worker_parser, ["videos.csv", "--text", "goal", "--threshold", "1.1"]),
+        (build_agent_parser, ["rows.jsonl", "--search-term", "goal", "--batch-size", "0"]),
+        (build_agent_parser, ["rows.jsonl", "--search-term", "goal", "--poll-interval", "nan"]),
+    ],
+)
+def test_parsers_reject_out_of_range_numeric_values(parser, argv):
+    with pytest.raises(SystemExit):
+        parser().parse_args(argv)

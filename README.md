@@ -118,13 +118,25 @@ vidgrep worker videos.csv --text "uwdivad" --region 132 476 592 388 --interval 2
 ```
 
 The worker runs the equivalent of `vidgrep scan` for each row's `path`, streams
-output line by line, writes per-video JSONL/JSON files under `<csv_stem>_ocr/`,
-and updates the CSV after each row. Successful rows get `processed=true`;
-failed or missing files remain `processed=false`, so rerunning the same command
-retries the first unfinished row and continues through the rest.
+output line by line to a partial file, atomically publishes per-video JSONL
+results under `<csv_stem>_ocr/` after success, and updates the CSV after each
+row. Successful rows get `processed=true`; failed or missing files remain
+`processed=false`, so rerunning the same command retries the first unfinished
+row and continues through the rest.
 
-The `agent` name is intentionally left available for a later AI layer that can
-inspect JSONL results and organize or denormalize them.
+### Result grouping agent
+
+Use `vidgrep agent` to canonicalize OCR line variants through the OpenAI
+Responses API and merge them into labeled time intervals:
+
+```bash
+vidgrep agent videos.csv --search-term "uwdivad"
+vidgrep agent worker_results --search-term "uwdivad" --watch
+```
+
+CSV input consumes only successful worker rows. Canonicalizations are cached in
+`<stem>.agent.state.json`; `--force` refreshes that cache once at startup, even
+when combined with `--watch`.
 
 ### Detection modes
 
@@ -155,7 +167,7 @@ inspect JSONL results and organize or denormalize them.
 
 ### Output
 
-By default clips are stream-copied (fast, but cuts snap to the nearest keyframe, ~2s inaccuracy). Use `--lossless` or `--reencode` for frame-accurate cuts.
+By default clips are stream-copied (fast, but cuts snap to the nearest keyframe, ~2s inaccuracy). Use `--lossless` or `--reencode` for frame-accurate cuts. Because WebM cannot contain the H.264 used by these modes, re-encoded `.webm` inputs default to `.mkv` output unless an explicit compatible path is supplied.
 
 ## Examples
 

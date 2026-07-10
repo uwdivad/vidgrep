@@ -131,7 +131,7 @@ def iter_video_records(
             except OSError as exc:
                 skipped.append({"path": str(current), "error": str(exc)})
 
-    records.sort(key=lambda item: item.path.casefold())
+    records.sort(key=lambda item: _path_key(item.path))
     return records, skipped
 
 
@@ -255,7 +255,9 @@ def _record_to_row(record: VideoRecord) -> dict:
 
 
 def _path_key(path: str) -> str:
-    return path.casefold()
+    # normcase folds case on Windows while preserving case on POSIX, where
+    # differently-cased paths may refer to different files.
+    return os.path.normcase(path)
 
 
 def write_json(

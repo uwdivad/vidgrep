@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import worker
 
 
@@ -286,3 +287,42 @@ def test_run_scan_job_writes_profile_metrics(tmp_path, monkeypatch):
     assert rows[0]["file"] == "clip.mp4"
     assert rows[0]["detect_fps"] == "12.5"
     assert metadata["profile_metrics"] == str(metrics_path)
+
+
+def test_run_scan_job_does_not_publish_partial_jsonl(tmp_path, monkeypatch):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_text("", encoding="utf-8")
+    output_stem = tmp_path / "out" / "clip"
+    args = _args(tmp_path / "videos.csv")
+
+    def fake_scan_video(*, video_path, detector, args, options_id, on_record):
+        on_record({"text": "partial"})
+        raise RuntimeError("OCR failed")
+
+    monkeypatch.setattr("scan.scan_video", fake_scan_video)
+
+    with pytest.raises(RuntimeError, match="OCR failed"):
+        worker._run_scan_job(args, video_path, output_stem, object(), "options-1")
+
+    assert not Path(f"{output_stem}.jsonl").exists()
+    assert not Path(f"{output_stem}.jsonl.partial").exists()
+
+
+def test_attempt_paths_are_published_only_after_success(tmp_path):
+    output_stem = tmp_path / "out" / "clip"
+    row = {
+        "jsonl_path": "old.jsonl",
+        "json_path": "old.json",
+    }
+
+    worker._mark_attempt_started(row, output_stem, "options-1")
+    assert row["jsonl_path"] == ""
+    assert row["json_path"] == ""
+
+    output_stem.parent.mkdir()
+    Path(f"{output_stem}.json").write_text(
+        json.dumps({"match_count": 0}), encoding="utf-8"
+    )
+    worker._mark_success(row, output_stem, 0)
+    assert row["jsonl_path"] == f"{output_stem}.jsonl"
+    assert row["json_path"] == f"{output_stem}.json"

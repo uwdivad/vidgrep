@@ -17,10 +17,25 @@ Controls (in the preview window):
     Esc          quit
 """
 import argparse
+import math
 import sys
 from pathlib import Path
 
 import cv2
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than 0")
+    return parsed
+
+
+def _nonnegative_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("must be greater than or equal to 0")
+    return parsed
 
 
 def _fit_scale(w: int, h: int, max_w: int, max_h: int) -> float:
@@ -39,11 +54,11 @@ def main():
     p = argparse.ArgumentParser(
         description="Interactively choose a --region crop box for scanning.")
     p.add_argument("input", help="video file to preview")
-    p.add_argument("--time", type=float, default=0.0,
+    p.add_argument("--time", type=_nonnegative_float, default=0.0,
                    help="timestamp (seconds) of the first frame to show")
-    p.add_argument("--max-width", type=int, default=1280,
+    p.add_argument("--max-width", type=_positive_int, default=1280,
                    help="max preview width in pixels (frame is scaled to fit)")
-    p.add_argument("--max-height", type=int, default=720,
+    p.add_argument("--max-height", type=_positive_int, default=720,
                    help="max preview height in pixels (frame is scaled to fit)")
     p.add_argument("--save-crop", metavar="PATH",
                    help="also write the cropped region to this image file")
@@ -129,10 +144,10 @@ def main():
                 region = (int(rx / scale), int(ry / scale),
                           int(rw / scale), int(rh / scale))
 
-    cap.release()
     cv2.destroyAllWindows()
 
     if not region:
+        cap.release()
         print("\nNo region selected.")
         return
 
@@ -151,8 +166,15 @@ def main():
     if args.save_crop:
         _, frame = read_at(idx)
         if frame is not None:
-            cv2.imwrite(args.save_crop, frame[y:y + h, x:x + w])
-            print(f"\nSaved crop preview: {args.save_crop}")
+            if cv2.imwrite(args.save_crop, frame[y:y + h, x:x + w]):
+                print(f"\nSaved crop preview: {args.save_crop}")
+            else:
+                print(
+                    f"Warning: could not save crop preview: {args.save_crop}",
+                    file=sys.stderr,
+                )
+
+    cap.release()
 
 
 if __name__ == "__main__":

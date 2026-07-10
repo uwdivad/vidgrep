@@ -1,6 +1,35 @@
 import argparse
+import math
 
 from agent import DEFAULT_MODEL
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than 0")
+    return parsed
+
+
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than 0")
+    return parsed
+
+
+def _nonnegative_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("must be greater than or equal to 0")
+    return parsed
+
+
+def _probability(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or not 0.0 <= parsed <= 1.0:
+        raise argparse.ArgumentTypeError("must be between 0 and 1")
+    return parsed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,15 +60,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output path (default: <stem>_clip[_N]<ext> next to input)",
     )
     p.add_argument(
-        "--padding", "-p", type=float, default=5.0, metavar="SEC",
+        "--padding", "-p", type=_nonnegative_float, default=5.0, metavar="SEC",
         help="Seconds to include before and after each match interval (default: 5)",
     )
     p.add_argument(
-        "--skip-frames", "-s", type=int, default=3, metavar="N",
+        "--skip-frames", "-s", type=_positive_int, default=3, metavar="N",
         help="Analyse every Nth frame - higher = faster scan (default: 3)",
     )
     p.add_argument(
-        "--interval", "-i", type=float, metavar="SEC",
+        "--interval", "-i", type=_positive_float, metavar="SEC",
         help=(
             "Analyse one frame every SEC seconds instead of every Nth frame. "
             "Frame-rate independent and far faster for long videos "
@@ -47,7 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
-        "--batch-size", "-b", type=int, default=8, metavar="N",
+        "--batch-size", "-b", type=_positive_int, default=8, metavar="N",
         help="Frames per OCR batch - higher = better GPU utilisation, more VRAM (default: 8)",
     )
     p.add_argument(
@@ -55,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print decode/detect throughput (fps, x-realtime) after each scan",
     )
     p.add_argument(
-        "--threshold", type=float, default=0.5, metavar="0-1",
+        "--threshold", type=_probability, default=0.5, metavar="0-1",
         help="Min OCR confidence or template similarity to count as a match (default: 0.5)",
     )
     p.add_argument(
@@ -63,11 +92,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only scan this rectangle in each frame (speeds up OCR significantly)",
     )
     p.add_argument(
-        "--merge-gap", type=float, default=2.0, metavar="SEC",
+        "--merge-gap", type=_nonnegative_float, default=2.0, metavar="SEC",
         help="Merge match intervals separated by less than this many seconds (default: 2)",
     )
     p.add_argument(
-        "--min-duration", type=float, default=0.0, metavar="SEC",
+        "--min-duration", type=_nonnegative_float, default=0.0, metavar="SEC",
         help="Discard matched intervals shorter than this (default: 0 - keep all)",
     )
     p.add_argument(
@@ -120,18 +149,18 @@ def build_scan_parser() -> argparse.ArgumentParser:
         help="Output file stem (default: scan_<pattern>_<timestamp> in current dir)",
     )
     p.add_argument(
-        "--skip-frames", "-s", type=int, default=3, metavar="N",
+        "--skip-frames", "-s", type=_positive_int, default=3, metavar="N",
         help="Analyse every Nth frame (default: 3)",
     )
     p.add_argument(
-        "--interval", "-i", type=float, metavar="SEC",
+        "--interval", "-i", type=_positive_float, metavar="SEC",
         help=(
             "Analyse one frame every SEC seconds instead of every Nth frame "
             "(frame-rate independent; overrides --skip-frames)."
         ),
     )
     p.add_argument(
-        "--batch-size", "-b", type=int, default=8, metavar="N",
+        "--batch-size", "-b", type=_positive_int, default=8, metavar="N",
         help="Frames per OCR batch - higher = better GPU utilisation, more VRAM (default: 8)",
     )
     p.add_argument(
@@ -147,7 +176,7 @@ def build_scan_parser() -> argparse.ArgumentParser:
         help="Metrics output path for --profile (default: <output_stem>.profile.csv)",
     )
     p.add_argument(
-        "--threshold", type=float, default=0.5, metavar="0-1",
+        "--threshold", type=_probability, default=0.5, metavar="0-1",
         help="Min OCR confidence to count as a match (default: 0.5)",
     )
     p.add_argument(
@@ -220,7 +249,7 @@ def build_worker_parser() -> argparse.ArgumentParser:
         help="Directory for per-video JSONL/JSON outputs (default: <csv_stem>_ocr)",
     )
     p.add_argument(
-        "--limit", type=int, metavar="N",
+        "--limit", type=_positive_int, metavar="N",
         help="Process at most N eligible rows in this run",
     )
     p.add_argument(
@@ -228,19 +257,19 @@ def build_worker_parser() -> argparse.ArgumentParser:
         help="Process rows even when processed is true",
     )
     p.add_argument(
-        "--skip-frames", "-s", type=int, default=3, metavar="N",
+        "--skip-frames", "-s", type=_positive_int, default=3, metavar="N",
         help="Analyse every Nth frame when --interval is not set (default: 3)",
     )
     p.add_argument(
-        "--interval", "-i", type=float, metavar="SEC",
+        "--interval", "-i", type=_positive_float, metavar="SEC",
         help="Analyse one frame every SEC seconds instead of every Nth frame",
     )
     p.add_argument(
-        "--batch-size", "-b", type=int, default=8, metavar="N",
+        "--batch-size", "-b", type=_positive_int, default=8, metavar="N",
         help="Frames per OCR batch (default: 8)",
     )
     p.add_argument(
-        "--threshold", type=float, default=0.5, metavar="0-1",
+        "--threshold", type=_probability, default=0.5, metavar="0-1",
         help="Min OCR confidence to count as a match (default: 0.5)",
     )
     p.add_argument(
@@ -291,7 +320,7 @@ def build_agent_parser() -> argparse.ArgumentParser:
         help="Output file stem (default: derived from input)",
     )
     p.add_argument(
-        "--merge-gap", type=float, default=2.0, metavar="SEC",
+        "--merge-gap", type=_nonnegative_float, default=2.0, metavar="SEC",
         help="Merge adjacent rows with the same canonical label within SEC seconds (default: 2)",
     )
     p.add_argument(
@@ -307,7 +336,7 @@ def build_agent_parser() -> argparse.ArgumentParser:
         help="Keep existing environment variables when loading --env-file",
     )
     p.add_argument(
-        "--batch-size", type=int, default=100, metavar="N",
+        "--batch-size", type=_positive_int, default=100, metavar="N",
         help="Unique OCR line variants per OpenAI request (default: 100)",
     )
     p.add_argument(
@@ -319,7 +348,7 @@ def build_agent_parser() -> argparse.ArgumentParser:
         help="Refresh OpenAI canonicalizations even when cached state exists",
     )
     p.add_argument(
-        "--poll-interval", type=float, default=2.0, metavar="SEC",
+        "--poll-interval", type=_positive_float, default=2.0, metavar="SEC",
         help="Seconds between --watch refreshes (default: 2)",
     )
     return p

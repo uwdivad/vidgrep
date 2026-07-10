@@ -433,7 +433,27 @@ class VideoClipper:
     ) -> List[str]:
         """Extract one clip per interval (start-padding … end+padding) using FFmpeg."""
         src = Path(self.path)
-        ext = src.suffix
+        # WebM cannot mux the H.264 output used by --lossless or by NVENC's
+        # fallback for VP8/VP9 sources. Keep stream-copy outputs in WebM, but
+        # use Matroska for re-encoded defaults so the selected codec is valid.
+        ext = (
+            ".mkv"
+            if (reencode or lossless) and src.suffix.lower() == ".webm"
+            else src.suffix
+        )
+        if concat and len(intervals) > 1 and output and Path(output).suffix.lower() == ".webm":
+            if lossless:
+                sys.exit(
+                    "Error: --lossless uses H.264, which cannot be written to WebM. "
+                    "Choose an .mkv or .mp4 output path."
+                )
+            if reencode:
+                codec = self._nvenc_codec()
+                if codec != "av1_nvenc":
+                    sys.exit(
+                        f"Error: {codec} cannot be written to WebM. "
+                        "Choose an .mkv or .mp4 output path."
+                    )
         clip_paths: List[str] = []
 
         for i, (start, end) in enumerate(intervals, 1):
@@ -477,10 +497,20 @@ class VideoClipper:
             "-i", self.path,
         ]
         if lossless:
+            if Path(output).suffix.lower() == ".webm":
+                sys.exit(
+                    "Error: --lossless uses H.264, which cannot be written to WebM. "
+                    "Choose an .mkv or .mp4 output path."
+                )
             cmd += ["-c:v", "libx264", "-crf", "0", "-preset", "ultrafast",
                     "-c:a", "copy", "-avoid_negative_ts", "make_zero"]
         elif reencode:
             codec = self._nvenc_codec()
+            if Path(output).suffix.lower() == ".webm" and codec != "av1_nvenc":
+                sys.exit(
+                    f"Error: {codec} cannot be written to WebM. "
+                    "Choose an .mkv or .mp4 output path."
+                )
             cmd += ["-c:v", codec, "-c:a", "copy", "-avoid_negative_ts", "make_zero"]
         else:
             # Stream-copy is fast and bit-for-bit lossless, but cuts snap to

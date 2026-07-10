@@ -301,6 +301,7 @@ def run_scan(args) -> None:
     detector = TextDetector(args.text, gpu=use_gpu, threshold=args.threshold, languages=languages)
 
     match_count = 0
+    files_scanned = 0
     profile_rows: list[dict] = []
     with jsonl_path.open("w", encoding="utf-8") as jsonl_file:
         for video_path in all_video_files:
@@ -319,6 +320,7 @@ def run_scan(args) -> None:
                     on_record=write_record,
                 )
                 match_count += video_match_count
+                files_scanned += 1
                 if profile_row is not None:
                     profile_rows.append(profile_row)
             except ValueError as exc:
@@ -328,7 +330,7 @@ def run_scan(args) -> None:
         args=args,
         started_at=started_at,
         inputs=args.inputs,
-        files_scanned=len(all_video_files),
+        files_scanned=files_scanned,
         match_count=match_count,
     )
     if profile_rows:
@@ -336,7 +338,7 @@ def run_scan(args) -> None:
         metadata["profile_metrics"] = str(metrics_path)
     meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
-    print(f"\nWrote {match_count} match(es) across {len(all_video_files)} file(s).")
+    print(f"\nWrote {match_count} match(es) across {files_scanned} file(s).")
     print(f"  Matches : {jsonl_path}")
     print(f"  Metadata: {meta_path}")
     if profile_rows:

@@ -2,6 +2,7 @@
 import csv
 import hashlib
 import json
+import os
 import re
 import sys
 import tempfile
@@ -93,8 +94,9 @@ def _output_stem_for(args, csv_path: Path, video_path: Path) -> Path:
     # Key the stem to the video path, not the CSV row index: inventory merges
     # can reorder or insert rows, which would remap index-based stems onto the
     # wrong videos.
-    digest = hashlib.sha256(str(video_path).casefold().encode("utf-8")).hexdigest()[:12]
-    return output_dir / f"{digest}_{_sanitize_stem(video_path.stem)}"
+    normalized_path = os.path.normcase(str(video_path.resolve()))
+    digest = hashlib.sha256(normalized_path.encode("utf-8")).hexdigest()[:12]
+    return output_dir.resolve() / f"{digest}_{_sanitize_stem(video_path.stem)}"
 
 
 def _metrics_path_for(args, output_stem: Path) -> Path:
@@ -110,8 +112,10 @@ def _mark_attempt_started(row: dict, output_stem: Path, options_id: str) -> None
     row["last_attempt_at"] = _now()
     row["completed_at"] = ""
     row["output_stem"] = str(output_stem)
-    row["jsonl_path"] = f"{output_stem}.jsonl"
-    row["json_path"] = f"{output_stem}.json"
+    # Publish result paths only after the scan has completed successfully.
+    # This keeps downstream consumers from treating a partial attempt as data.
+    row["jsonl_path"] = ""
+    row["json_path"] = ""
     row["match_count"] = ""
     row["exit_code"] = ""
     row["error"] = ""
@@ -122,6 +126,8 @@ def _mark_success(row: dict, output_stem: Path, exit_code: int) -> None:
     row["completed_at"] = _now()
     row["exit_code"] = str(exit_code)
     row["error"] = ""
+    row["jsonl_path"] = f"{output_stem}.jsonl"
+    row["json_path"] = f"{output_stem}.json"
     row["match_count"] = _read_match_count(Path(f"{output_stem}.json"))
 
 
@@ -149,36 +155,50 @@ def _run_scan_job(args, video_path: Path, output_stem: Path, detector, options_i
 
     started_at = datetime.now(timezone.utc)
     jsonl_path = Path(f"{output_stem}.jsonl")
+    partial_jsonl_path = Path(f"{jsonl_path}.partial")
     meta_path = Path(f"{output_stem}.json")
+    partial_meta_path = Path(f"{meta_path}.partial")
     jsonl_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with jsonl_path.open("w", encoding="utf-8") as jsonl_file:
-        def write_record(record):
-            jsonl_file.write(json.dumps(record) + "\n")
-            jsonl_file.flush()
+    try:
+        with partial_jsonl_path.open("w", encoding="utf-8") as jsonl_file:
+            def write_record(record):
+                jsonl_file.write(json.dumps(record) + "\n")
+                jsonl_file.flush()
 
-        match_count, profile_row = scan_video(
-            video_path=video_path,
-            detector=detector,
+            match_count, profile_row = scan_video(
+                video_path=video_path,
+                detector=detector,
+                args=args,
+                options_id=options_id,
+                on_record=write_record,
+            )
+
+        metadata = scan_metadata(
             args=args,
-            options_id=options_id,
-            on_record=write_record,
+            started_at=started_at,
+            inputs=[str(video_path)],
+            files_scanned=1,
+            match_count=match_count,
+        )
+        if profile_row is not None:
+            metrics_path = _metrics_path_for(args, output_stem)
+            write_profile_metrics(metrics_path, [profile_row])
+            metadata["profile_metrics"] = str(metrics_path)
+            metadata["profile"] = profile_row
+        partial_meta_path.write_text(
+            json.dumps(metadata, indent=2), encoding="utf-8"
         )
 
-    metadata = scan_metadata(
-        args=args,
-        started_at=started_at,
-        inputs=[str(video_path)],
-        files_scanned=1,
-        match_count=match_count,
-    )
-    if profile_row is not None:
-        metrics_path = _metrics_path_for(args, output_stem)
-        write_profile_metrics(metrics_path, [profile_row])
-        metadata["profile_metrics"] = str(metrics_path)
-        metadata["profile"] = profile_row
-    meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    return match_count
+        # Publish JSONL last so directory consumers never observe a new result
+        # before its metadata has also been committed.
+        partial_meta_path.replace(meta_path)
+        partial_jsonl_path.replace(jsonl_path)
+        return match_count
+    except BaseException:
+        partial_jsonl_path.unlink(missing_ok=True)
+        partial_meta_path.unlink(missing_ok=True)
+        raise
 
 
 def run_worker(args) -> None:

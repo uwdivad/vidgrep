@@ -124,10 +124,21 @@ def _iter_jsonl_paths(input_path: Path) -> Iterable[Path]:
     elif input_path.suffix.lower() == ".csv":
         with input_path.open("r", newline="", encoding="utf-8-sig") as fh:
             reader = csv.DictReader(fh)
+            has_processed_column = bool(
+                reader.fieldnames and "processed" in reader.fieldnames
+            )
             for row in reader:
+                if (
+                    has_processed_column
+                    and str(row.get("processed", "")).casefold() != "true"
+                ):
+                    continue
                 raw = (row.get("jsonl_path") or "").strip()
                 if raw:
-                    yield Path(raw)
+                    jsonl_path = Path(raw)
+                    if not jsonl_path.is_absolute() and not jsonl_path.exists():
+                        jsonl_path = input_path.parent / jsonl_path
+                    yield jsonl_path
     else:
         yield input_path
 
@@ -448,7 +459,12 @@ def _write_outputs(
     meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
 
-def _process_once(args, *, started_at: str) -> tuple[int, int]:
+def _process_once(
+    args,
+    *,
+    started_at: str,
+    force_refresh: Optional[bool] = None,
+) -> tuple[int, int]:
     input_path = Path(args.input)
     if not input_path.exists():
         sys.exit(f"Error: not found: {input_path}")
@@ -468,8 +484,11 @@ def _process_once(args, *, started_at: str) -> tuple[int, int]:
         state["options_fingerprint"] = fingerprint
     cache = state["canonical_cache"]
     rows = _read_input_rows(input_path)
-    if args.force:
+    should_force_refresh = args.force if force_refresh is None else force_refresh
+    if should_force_refresh:
         cache.clear()
+        state["updated_at"] = _now()
+        _write_state(state_path, state)
 
     missing = {_line_key(row) for row in rows if _line_key(row) and _line_key(row) not in cache}
     if missing:
@@ -515,9 +534,14 @@ def _process_once(args, *, started_at: str) -> tuple[int, int]:
 
 def run_agent(args) -> None:
     started_at = _now()
+    first_pass = True
     while True:
         try:
-            match_count, group_count = _process_once(args, started_at=started_at)
+            match_count, group_count = _process_once(
+                args,
+                started_at=started_at,
+                force_refresh=args.force and first_pass,
+            )
         except RuntimeError as exc:
             # Completed batches are already saved to the state file, so a
             # transient API failure only delays the remaining work.
@@ -526,6 +550,7 @@ def run_agent(args) -> None:
             print(f"Error: {exc} — retrying on next poll.", file=sys.stderr, flush=True)
         else:
             print(f"Wrote {group_count} group(s) from {match_count} match row(s).", flush=True)
+        first_pass = False
         if not args.watch:
             return
         time.sleep(args.poll_interval)

@@ -2,6 +2,7 @@ import json
 from types import SimpleNamespace
 
 import agent
+import pytest
 
 
 class _FakeCanonicalizer:
@@ -240,3 +241,43 @@ def test_group_rows_deduplicates_match_ids():
     assert len(groups) == 1
     assert groups[0]["match_count"] == 2
     assert groups[0]["match_ids"] == ["m1", "m2"]
+
+
+def test_csv_input_ignores_unsuccessful_worker_rows(tmp_path):
+    complete = tmp_path / "complete.jsonl"
+    partial = tmp_path / "partial.jsonl"
+    complete.write_text("{}\n", encoding="utf-8")
+    partial.write_text("{}\n", encoding="utf-8")
+    csv_path = tmp_path / "videos.csv"
+    csv_path.write_text(
+        "processed,jsonl_path\n"
+        f"true,{complete}\n"
+        f"false,{partial}\n",
+        encoding="utf-8",
+    )
+
+    assert list(agent._iter_jsonl_paths(csv_path)) == [complete]
+
+
+def test_watch_force_refreshes_only_the_first_pass(monkeypatch):
+    calls = []
+    sleeps = 0
+
+    def fake_process_once(args, *, started_at, force_refresh=None):
+        calls.append(force_refresh)
+        return 0, 0
+
+    def fake_sleep(_seconds):
+        nonlocal sleeps
+        sleeps += 1
+        if sleeps == 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(agent, "_process_once", fake_process_once)
+    monkeypatch.setattr(agent.time, "sleep", fake_sleep)
+    args = SimpleNamespace(watch=True, force=True, poll_interval=0.01)
+
+    with pytest.raises(KeyboardInterrupt):
+        agent.run_agent(args)
+
+    assert calls == [True, False]

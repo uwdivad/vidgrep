@@ -180,6 +180,14 @@ class TemplateDetector:
 
     def detect(self, frame: np.ndarray) -> bool:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        frame_h, frame_w = gray.shape[:2]
+        template_h, template_w = self._tmpl_gray.shape[:2]
+        if frame_h < template_h or frame_w < template_w:
+            raise ValueError(
+                "Template image "
+                f"({template_w}x{template_h}) is larger than the scanned "
+                f"frame/region ({frame_w}x{frame_h})"
+            )
         if self._cuda:
             gpu_frame = cv2.cuda_GpuMat()
             gpu_frame.upload(gray)

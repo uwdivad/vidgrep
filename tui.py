@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -104,7 +105,12 @@ def _parse_region(value: str) -> Optional[tuple[int, int, int, int]]:
 
 def _parse_optional_float(value: str) -> Optional[float]:
     value = value.strip()
-    return float(value) if value else None
+    if not value:
+        return None
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise ValueError("interval must be greater than 0")
+    return parsed
 
 
 def _matches_to_intervals(
@@ -459,20 +465,41 @@ if TEXTUAL_IMPORT_ERROR is None:
                 raise ValueError("text pattern is required")
 
             interval = _parse_optional_float(self.query_one("#interval", Input).value)
+            skip_frames = int(self.query_one("#skip_frames", Input).value.strip() or "3")
+            batch_size = int(self.query_one("#batch_size", Input).value.strip() or "8")
+            threshold = float(self.query_one("#threshold", Input).value.strip() or "0.5")
+            padding = float(self.query_one("#padding", Input).value.strip() or "5")
+            merge_gap = float(self.query_one("#merge_gap", Input).value.strip() or "2")
+            min_duration = float(
+                self.query_one("#min_duration", Input).value.strip() or "0"
+            )
+            if skip_frames <= 0:
+                raise ValueError("skip frames must be greater than 0")
+            if batch_size <= 0:
+                raise ValueError("batch size must be greater than 0")
+            if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+                raise ValueError("threshold must be between 0 and 1")
+            for label, value in (
+                ("padding", padding),
+                ("merge gap", merge_gap),
+                ("minimum duration", min_duration),
+            ):
+                if not math.isfinite(value) or value < 0:
+                    raise ValueError(f"{label} must be greater than or equal to 0")
             return ScanJob(
                 input_path=input_path,
                 pattern=pattern,
                 output=self.query_one("#output", Input).value.strip(),
                 region=_parse_region(self.query_one("#region", Input).value),
                 interval=interval,
-                skip_frames=max(1, int(self.query_one("#skip_frames", Input).value.strip() or "3")),
-                batch_size=max(1, int(self.query_one("#batch_size", Input).value.strip() or "8")),
-                threshold=float(self.query_one("#threshold", Input).value.strip() or "0.5"),
+                skip_frames=skip_frames,
+                batch_size=batch_size,
+                threshold=threshold,
                 language=self.query_one("#language", Input).value.strip() or "en",
                 no_gpu=self.query_one("#no_gpu", Checkbox).value,
-                padding=float(self.query_one("#padding", Input).value.strip() or "5"),
-                merge_gap=float(self.query_one("#merge_gap", Input).value.strip() or "2"),
-                min_duration=float(self.query_one("#min_duration", Input).value.strip() or "0"),
+                padding=padding,
+                merge_gap=merge_gap,
+                min_duration=min_duration,
                 concat=self.query_one("#concat", Checkbox).value,
                 reencode=self.query_one("#reencode", Checkbox).value,
                 lossless=self.query_one("#lossless", Checkbox).value,

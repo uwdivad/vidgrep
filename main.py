@@ -94,15 +94,19 @@ def main():
         else:
             skip_frames = args.skip_frames
 
-        intervals = clipper.find_intervals(
-            detector,
-            skip_frames=skip_frames,
-            region=region,
-            merge_gap=args.merge_gap,
-            min_duration=args.min_duration,
-            batch_size=args.batch_size,
-            collect_stats=args.stats,
-        )
+        try:
+            intervals = clipper.find_intervals(
+                detector,
+                skip_frames=skip_frames,
+                region=region,
+                merge_gap=args.merge_gap,
+                min_duration=args.min_duration,
+                batch_size=args.batch_size,
+                collect_stats=args.stats,
+            )
+        except ValueError as exc:
+            print(f"Warning: skipping '{video_path}': {exc}", file=sys.stderr)
+            continue
 
         if not intervals:
             print("No matches found.")
