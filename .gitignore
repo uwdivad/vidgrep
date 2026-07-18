@@ -40,6 +40,7 @@ videos.json
 *_ocr/
 
 # Generated scan / agent / profiling outputs
+*.db
 scan_*.jsonl
 scan_*.json
 *.agent.jsonl
