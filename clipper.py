@@ -1,7 +1,9 @@
 """Video scanning and GPU-accelerated clip extraction via FFmpeg NVENC."""
+import queue
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
@@ -9,6 +11,33 @@ from typing import Callable, List, Optional, Tuple
 import cv2
 import numpy as np
 from tqdm import tqdm
+
+
+# NVDEC decoders by source codec.  The explicit *_cuvid decoders are used
+# instead of the generic "-hwaccel cuda" flag because the latter fails to
+# initialise on some builds/files (observed with h264 on FFmpeg 8.0.1) and
+# they support decoder-side cropping.
+_CUVID_DECODERS = {
+    "h264": "h264_cuvid",
+    "hevc": "hevc_cuvid",
+    "h265": "hevc_cuvid",
+    "av1": "av1_cuvid",
+    "vp9": "vp9_cuvid",
+    "vp8": "vp8_cuvid",
+    "mpeg2video": "mpeg2_cuvid",
+    "mpeg4": "mpeg4_cuvid",
+    "vc1": "vc1_cuvid",
+    "mjpeg": "mjpeg_cuvid",
+}
+
+
+def _probe_codec(path: str) -> str:
+    r = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
+         "-show_entries", "stream=codec_name", "-of", "csv=p=0", path],
+        capture_output=True, text=True,
+    )
+    return r.stdout.strip().lower()
 
 
 def _clamp_region(
@@ -84,21 +113,41 @@ class _FFSampler:
         w: int,
         h: int,
         region: Optional[Tuple[int, int, int, int]] = None,
+        decoder: Optional[str] = None,
     ):
         vf = f"select=not(mod(n\\,{skip_frames}))"
+        cmd = ["ffmpeg", "-nostdin"]
         if region:
             x, y, rw, rh = _clamp_region(region, w, h)
-            vf += f",crop={rw}:{rh}:{x}:{y}"
             out_w, out_h = rw, rh
         else:
             out_w, out_h = w, h
 
+        if decoder:
+            cmd += ["-c:v", decoder]
+            if region:
+                # cuvid crops on the GPU before frames leave the decoder, but
+                # its edges must stay even-aligned; any odd remainder is
+                # trimmed by a crop filter on the already-small frames.
+                ax, ay = x - x % 2, y - y % 2
+                ex = min(w, x + rw + (x + rw) % 2)
+                ey = min(h, y + rh + (y + rh) % 2)
+                cmd += ["-crop", f"{ay}x{h - ey}x{ax}x{w - ex}"]
+                if (ax, ay, ex - ax, ey - ay) != (x, y, rw, rh):
+                    vf += f",format=bgr24,crop={rw}:{rh}:{x - ax}:{y - ay}"
+            cmd += ["-i", path]
+        else:
+            cmd += ["-i", path]
+            if region:
+                # Crop after converting to bgr24: cropping the decoder's
+                # yuv420p output instead silently rounds odd widths/heights
+                # down to even, desyncing the fixed-size pipe reads below.
+                vf += f",format=bgr24,crop={rw}:{rh}:{x}:{y}"
+
         self._frame_size = out_w * out_h * 3
         self._shape = (out_h, out_w, 3)
         self._proc = subprocess.Popen(
-            [
-                "ffmpeg", "-nostdin",
-                "-i", path,
+            cmd + [
                 "-vf", vf,
                 "-fps_mode", "vfr",
                 "-an",
@@ -128,6 +177,60 @@ class _FFSampler:
     def release(self):
         self._proc.stdout.close()
         self._proc.wait()
+
+
+class _Prefetcher:
+    """
+    Reads frames from a sampler on a background thread so FFmpeg keeps
+    decoding while the main thread runs OCR.  Without this the OS pipe
+    buffer (far smaller than one raw frame) serialises decode and detection.
+    """
+
+    _SENTINEL = object()
+
+    def __init__(self, sampler, max_frames: int):
+        self._sampler = sampler
+        self._queue: queue.Queue = queue.Queue(maxsize=max_frames)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._fill, daemon=True)
+        self._thread.start()
+
+    def _fill(self):
+        try:
+            while not self._stop.is_set():
+                ret, frame = self._sampler.read()
+                if not ret:
+                    break
+                while not self._stop.is_set():
+                    try:
+                        self._queue.put(frame, timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+        finally:
+            while not self._stop.is_set():
+                try:
+                    self._queue.put(self._SENTINEL, timeout=0.1)
+                    break
+                except queue.Full:
+                    continue
+
+    def read(self) -> Tuple[bool, Optional[np.ndarray]]:
+        item = self._queue.get()
+        if item is self._SENTINEL:
+            return False, None
+        return True, item
+
+    def release(self):
+        self._stop.set()
+        # Drain so a producer blocked on put() can observe the stop flag.
+        try:
+            while True:
+                self._queue.get_nowait()
+        except queue.Empty:
+            pass
+        self._thread.join(timeout=5)
+        self._sampler.release()
 
 
 class VideoClipper:
@@ -188,10 +291,23 @@ class VideoClipper:
             region = _clamp_region(region, self._w, self._h)
 
         sampler = None
+        reader = None
         if skip_frames > 1:
-            try:
-                sampler = _FFSampler(self.path, skip_frames, self._w, self._h, region)
-            except (OSError, RuntimeError):
+            # Prefer NVDEC decode (falling back to software decode inside
+            # FFmpeg if the decoder rejects the file, e.g. an unsupported
+            # profile or no NVIDIA GPU); the frame-0 pre-read in _FFSampler
+            # surfaces either failure here.
+            cuvid = _CUVID_DECODERS.get(_probe_codec(self.path))
+            for decoder in ([cuvid, None] if cuvid else [None]):
+                try:
+                    sampler = _FFSampler(
+                        self.path, skip_frames, self._w, self._h, region,
+                        decoder=decoder,
+                    )
+                    break
+                except (OSError, RuntimeError):
+                    continue
+            if sampler is None:
                 self._emit("FFmpeg frame sampler unavailable — decoding every frame…")
 
         expected = self.frame_count // skip_frames + 1
@@ -208,9 +324,12 @@ class VideoClipper:
 
         try:
             if sampler is not None:
+                # Buffer up to ~256 MB of decoded frames ahead of the consumer.
+                max_buffered = max(4, min(64, (256 << 20) // sampler._frame_size))
+                reader = _Prefetcher(sampler, max_buffered)
                 idx = 0
                 while True:
-                    ret, frame = sampler.read()
+                    ret, frame = reader.read()
                     if not ret:
                         break
                     yield (idx * skip_frames) / self.fps, frame
@@ -240,7 +359,9 @@ class VideoClipper:
             finally:
                 cap.release()
         finally:
-            if sampler is not None:
+            if reader is not None:
+                reader.release()
+            elif sampler is not None:
                 sampler.release()
             if bar is not None:
                 bar.close()
@@ -474,13 +595,14 @@ class VideoClipper:
                 else:
                     out = str(src.parent / f"{src.stem}_clip_{i}{ext}")
 
-            self._emit(f"\n[{i}/{len(intervals)}] {t0:.2f}s – {t1:.2f}s  →  {out}")
+            # ASCII arrow: "→" crashes cp1252-encoded stdout when piped on Windows.
+            self._emit(f"\n[{i}/{len(intervals)}] {t0:.2f}s - {t1:.2f}s  ->  {out}")
             self._ffmpeg_clip(t0, t1, out, reencode, lossless)
             clip_paths.append(out)
 
         if concat and len(intervals) > 1:
             final = output or str(src.parent / f"{src.stem}_clips{ext}")
-            self._emit(f"\nConcatenating {len(clip_paths)} clips  →  {final}")
+            self._emit(f"\nConcatenating {len(clip_paths)} clips  ->  {final}")
             self._ffmpeg_concat(clip_paths, final)
             for p in clip_paths:
                 Path(p).unlink(missing_ok=True)
@@ -531,12 +653,7 @@ class VideoClipper:
         Path(list_path).unlink(missing_ok=True)
 
     def _nvenc_codec(self) -> str:
-        r = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
-             "-show_entries", "stream=codec_name", "-of", "csv=p=0", self.path],
-            capture_output=True, text=True,
-        )
-        codec = r.stdout.strip().lower()
+        codec = _probe_codec(self.path)
         return {
             "h264": "h264_nvenc",
             "hevc": "hevc_nvenc",

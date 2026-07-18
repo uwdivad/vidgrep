@@ -120,7 +120,11 @@ class TextDetector:
         if len(frames) == 1:
             return [self.detect_matches(frames[0])]
         try:
-            batched = self._reader.readtext_batched(frames, detail=1)
+            # Without batch_size EasyOCR's recogniser defaults to processing
+            # one text crop per GPU call, serialising the whole batch.
+            batched = self._reader.readtext_batched(
+                frames, detail=1, batch_size=len(frames)
+            )
         except Exception:
             return [self.detect_matches(f) for f in frames]
         return [self._filter(res) for res in batched]

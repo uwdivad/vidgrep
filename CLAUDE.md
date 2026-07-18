@@ -94,6 +94,9 @@ Flat modules with setuptools console scripts in `pyproject.toml`:
 - `--skip-frames N` and `--interval SEC` are the main performance levers.
   Sampling and `--region` cropping happen inside FFmpeg via `_FFSampler` when
   available, so skipped frames and cropped-away pixels never cross the pipe.
+  The sampler decodes on NVDEC (`*_cuvid` decoders, chosen by ffprobe codec)
+  with decoder-side cropping when possible, falling back to software decode,
+  and a `_Prefetcher` thread keeps FFmpeg decoding while OCR runs.
 - `--lossless` implies re-encoding and uses `libx264 -crf 0`; `--reencode`
   uses NVENC with codec auto-detection from ffprobe.
 - `--output` is rejected when the input is a directory; clips are named next to
