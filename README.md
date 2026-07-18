@@ -9,10 +9,14 @@ vidgrep gameplay.mp4 --template logo.png
 
 ## How it works
 
-1. Samples every Nth frame of the video (default: every 3rd) — or one frame every N seconds with `--interval`. Sampling and `--region` cropping run inside FFmpeg, so skipped frames are nearly free
-2. Runs OCR or template matching on each sampled frame
+1. Samples every Nth frame of the video (default: every 3rd) — or one frame every N seconds with `--interval`. Sampling and `--region` cropping run inside FFmpeg, so skipped frames are nearly free. On NVIDIA GPUs, decoding runs on the NVDEC hardware engine with the region cropped before frames leave the GPU, falling back to software decode automatically
+2. Runs OCR or template matching on each sampled frame, batched on the GPU while a prefetch thread keeps FFmpeg decoding in parallel
 3. Merges nearby hit windows into intervals
 4. Extracts a padded clip for each interval via FFmpeg
+
+See [docs/making-ocr-scans-6x-faster.md](docs/making-ocr-scans-6x-faster.md)
+for how the scan pipeline was profiled and optimised (~6× on the benchmark
+video).
 
 ## Requirements
 
@@ -138,6 +142,25 @@ CSV input consumes only successful worker rows. Canonicalizations are cached in
 `<stem>.agent.state.json`; `--force` refreshes that cache once at startup, even
 when combined with `--watch`.
 
+### Searching scan results
+
+Use `ocr_db.py` to combine a directory of scan output (`.jsonl` + `.json`
+pairs, e.g. a worker's `<csv_stem>_ocr/` folder) into a searchable SQLite
+database with full-text search:
+
+```bash
+python ocr_db.py ingest lasts4_ocr --db lasts4_ocr.db
+python ocr_db.py search "contract started" --db lasts4_ocr.db
+python ocr_db.py search "complete*" --db lasts4_ocr.db --gap 10 --min-conf 0.7
+```
+
+Ingest is incremental and safe to re-run while scans are still writing:
+unchanged files are skipped, malformed lines are logged and ignored, and each
+file commits in its own transaction. Search takes FTS5 queries (quoted
+phrases, `*` prefixes, `AND`/`OR`/`NEAR`) and groups consecutive hits within
+`--gap` seconds into one occurrence window per video, printing the time range,
+hit count, and best-confidence sample text.
+
 ### Detection modes
 
 | Flag | Description |
@@ -155,6 +178,8 @@ when combined with `--watch`.
 | `--interval SEC` | — | Sample one frame every SEC seconds (frame-rate independent; overrides `--skip-frames`). Much faster on long videos |
 | `--batch-size N` | `8` | Frames per OCR batch (higher = better GPU utilisation, more VRAM) |
 | `--stats` | — | Print decode/detect throughput (fps, ×-realtime) after each scan |
+| `--profile` | — | Record per-video timing metrics (decode wait, OCR, writes) — `scan`/`worker` only |
+| `--metrics-output PATH` | `<stem>.profile.csv` | Where `--profile` appends its CSV/JSONL rows |
 | `--threshold 0-1` | `0.5` | Min OCR confidence or template similarity to count as a match |
 | `--region X Y W H` | — | Crop each frame to this rectangle before scanning |
 | `--merge-gap SEC` | `2.0` | Merge match windows separated by less than this |
