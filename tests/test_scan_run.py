@@ -2,8 +2,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-import detector
-import scan
+from vidgrep import detector, scan
 
 
 def test_run_scan_counts_only_successful_files(tmp_path, monkeypatch):

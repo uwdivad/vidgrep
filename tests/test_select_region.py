@@ -2,7 +2,7 @@ import sys
 
 import numpy as np
 
-import select_region
+from vidgrep import select_region
 
 
 def test_save_crop_reads_before_releasing_capture(tmp_path, monkeypatch):

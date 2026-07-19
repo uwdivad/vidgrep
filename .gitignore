@@ -51,5 +51,11 @@ metrics.csv
 smoke.json
 smoke.jsonl
 
+# Local data artifacts (scan outputs, inventories, databases)
+data/
+
+# Notebooks
+.ipynb_checkpoints/
+
 # Tooling artifacts
 .playwright-mcp/

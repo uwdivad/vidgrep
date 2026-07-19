@@ -150,7 +150,7 @@ def scan_video(
     on_record: Callable[[dict], None],
 ) -> tuple[int, Optional[dict]]:
     """Scan one video with an existing detector and stream JSONL-ready records."""
-    from clipper import VideoClipper
+    from vidgrep.clipper import VideoClipper
 
     started_at = datetime.now(timezone.utc)
     total_started = time.perf_counter()
@@ -260,7 +260,7 @@ def scan_metadata(*, args, started_at: datetime, inputs: list[str], files_scanne
 
 
 def run_scan(args) -> None:
-    from detector import TextDetector
+    from vidgrep.detector import TextDetector
 
     started_at = datetime.now(timezone.utc)
 

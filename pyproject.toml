@@ -27,20 +27,9 @@ tui = [
 testpaths = ["tests"]
 
 [project.scripts]
-vidgrep = "main:main"
-vidgrep-region = "select_region:main"
-vidgrep-tui = "tui:main"
+vidgrep = "vidgrep.main:main"
+vidgrep-region = "vidgrep.select_region:main"
+vidgrep-tui = "vidgrep.tui:main"
 
 [tool.setuptools]
-py-modules = [
-    "args",
-    "agent",
-    "clipper",
-    "detector",
-    "inventory",
-    "main",
-    "scan",
-    "select_region",
-    "tui",
-    "worker",
-]
+packages = ["vidgrep"]

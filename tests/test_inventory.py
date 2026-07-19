@@ -3,7 +3,7 @@ import json
 import re
 from datetime import datetime, timezone
 
-from inventory import VideoRecord, default_stem, iter_video_records, write_csv, write_json
+from vidgrep.inventory import VideoRecord, default_stem, iter_video_records, write_csv, write_json
 
 
 def _touch(path, content=""):

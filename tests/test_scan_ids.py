@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-import scan
+from vidgrep import scan
 
 
 def _args(**overrides):

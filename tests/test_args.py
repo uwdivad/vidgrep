@@ -1,6 +1,6 @@
 import pytest
 
-from args import (
+from vidgrep.args import (
     build_agent_parser,
     build_inventory_parser,
     build_parser,

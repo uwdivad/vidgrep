@@ -1,8 +1,9 @@
 import json
 from types import SimpleNamespace
 
-import agent
 import pytest
+
+from vidgrep import agent
 
 
 class _FakeCanonicalizer:

@@ -1,31 +1,55 @@
 import sys
 from pathlib import Path
 
-from args import build_parser
+from vidgrep.args import build_parser
+
+
+def _run_help(argv: list[str]) -> None:
+    from vidgrep import args
+
+    builders = {
+        "clip": build_parser,
+        "scan": args.build_scan_parser,
+        "inventory": args.build_inventory_parser,
+        "worker": args.build_worker_parser,
+        "agent": args.build_agent_parser,
+    }
+    topic = argv[0] if argv else "clip"
+    builder = builders.get(topic)
+    if builder is None:
+        sys.exit(
+            f"Error: unknown help topic '{topic}' "
+            f"(choose from {', '.join(builders)})"
+        )
+    builder().print_help()
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "help":
+        _run_help(sys.argv[2:])
+        return
+
     if len(sys.argv) > 1 and sys.argv[1] == "scan":
-        from args import build_scan_parser
-        from scan import run_scan
+        from vidgrep.args import build_scan_parser
+        from vidgrep.scan import run_scan
         run_scan(build_scan_parser().parse_args(sys.argv[2:]))
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "inventory":
-        from args import build_inventory_parser
-        from inventory import run_inventory
+        from vidgrep.args import build_inventory_parser
+        from vidgrep.inventory import run_inventory
         run_inventory(build_inventory_parser().parse_args(sys.argv[2:]))
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "worker":
-        from args import build_worker_parser
-        from worker import run_worker
+        from vidgrep.args import build_worker_parser
+        from vidgrep.worker import run_worker
         run_worker(build_worker_parser().parse_args(sys.argv[2:]))
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "agent":
-        from args import build_agent_parser
-        from agent import run_agent
+        from vidgrep.args import build_agent_parser
+        from vidgrep.agent import run_agent
         run_agent(build_agent_parser().parse_args(sys.argv[2:]))
         return
 
@@ -35,7 +59,7 @@ def main():
     if not input_path.exists():
         sys.exit(f"Error: not found: {input_path}")
 
-    from scan import find_video_files
+    from vidgrep.scan import find_video_files
 
     try:
         video_files = find_video_files(input_path)
@@ -51,8 +75,8 @@ def main():
             "(clips are named per-file next to each source)."
         )
 
-    from detector import TextDetector, TemplateDetector
-    from clipper import VideoClipper
+    from vidgrep.detector import TextDetector, TemplateDetector
+    from vidgrep.clipper import VideoClipper
 
     use_gpu = not args.no_gpu
     languages = [lang.strip() for lang in args.lang.split(",")]

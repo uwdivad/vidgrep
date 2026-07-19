@@ -1,6 +1,6 @@
 import pytest
 
-from tui import _parse_optional_float
+from vidgrep.tui import _parse_optional_float
 
 
 def test_optional_interval_requires_positive_finite_value():

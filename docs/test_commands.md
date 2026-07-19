@@ -12,7 +12,7 @@ Recommended placeholders:
 - `EMPTY_DIR\`: an existing directory with no supported video files
 - `LOGO.png`: a small template image that appears in `VIDEO.mp4`
 - `PATTERN`: a text string or Python regex to find with EasyOCR
-- `REGION`: four integers, `X Y W H`, from `select_region.py`
+- `REGION`: four integers, `X Y W H`, from `vidgrep-region`
 - `NAME`: part of a filename to find in inventory mode
 
 ## 0. Environment and parser smoke tests
@@ -21,8 +21,8 @@ Recommended placeholders:
 # Avoid Windows cp1252 stdout failures when argparse prints Unicode help text.
 $env:PYTHONIOENCODING = "utf-8"
 
-# Python syntax/import baseline used by this repo
-python -m py_compile main.py args.py clipper.py detector.py scan.py inventory.py worker.py select_region.py tui.py
+# Python syntax/import baseline used by this repo (run from the repo root)
+python -m compileall -q vidgrep
 
 # Fast unit tests for pure-Python inventory, worker, and parser behavior
 python -m pytest
@@ -34,11 +34,11 @@ python -m pip install -e .
 python -m pip install -e ".[tui]"
 
 # CLI parser smoke tests
-python main.py --help
-python main.py scan --help
-python main.py inventory --help
-python main.py worker --help
-python select_region.py --help
+python -m vidgrep --help
+python -m vidgrep scan --help
+python -m vidgrep inventory --help
+python -m vidgrep worker --help
+python -m vidgrep.select_region --help
 
 # Installed CLI smoke tests, after: pip install -e .
 vidgrep --help

@@ -139,7 +139,7 @@ def _mark_failure(row: dict, exit_code: Optional[int], error: str) -> None:
 
 
 def _build_detector(args):
-    from detector import TextDetector
+    from vidgrep.detector import TextDetector
 
     languages = [lang.strip() for lang in args.lang.split(",")]
     return TextDetector(
@@ -151,7 +151,7 @@ def _build_detector(args):
 
 
 def _run_scan_job(args, video_path: Path, output_stem: Path, detector, options_id: str) -> int:
-    from scan import scan_metadata, scan_video, write_profile_metrics
+    from vidgrep.scan import scan_metadata, scan_video, write_profile_metrics
 
     started_at = datetime.now(timezone.utc)
     jsonl_path = Path(f"{output_stem}.jsonl")
@@ -202,7 +202,7 @@ def _run_scan_job(args, video_path: Path, output_stem: Path, detector, options_i
 
 
 def run_worker(args) -> None:
-    from scan import _scan_options_id
+    from vidgrep.scan import _scan_options_id
 
     csv_path = Path(args.csv)
     if not csv_path.exists():

@@ -69,7 +69,7 @@ The editable install exposes these commands:
 | `vidgrep-region` | Interactive helper for choosing a `--region X Y W H` crop |
 | `vidgrep-tui` | Interactive scan dashboard with live progress, matches, logs, and clip extraction |
 
-For development from the repo root, `python main.py ...` and `python select_region.py ...` still work.
+For development from the repo root, `python -m vidgrep ...` and `python -m vidgrep.select_region ...` still work.
 
 ### Terminal dashboard
 
@@ -144,14 +144,14 @@ when combined with `--watch`.
 
 ### Searching scan results
 
-Use `ocr_db.py` to combine a directory of scan output (`.jsonl` + `.json`
+Use `vidgrep.ocr_db` to combine a directory of scan output (`.jsonl` + `.json`
 pairs, e.g. a worker's `<csv_stem>_ocr/` folder) into a searchable SQLite
 database with full-text search:
 
 ```bash
-python ocr_db.py ingest lasts4_ocr --db lasts4_ocr.db
-python ocr_db.py search "contract started" --db lasts4_ocr.db
-python ocr_db.py search "complete*" --db lasts4_ocr.db --gap 10 --min-conf 0.7
+python -m vidgrep.ocr_db ingest data/lasts4_ocr --db data/lasts4_ocr.db
+python -m vidgrep.ocr_db search "contract started" --db data/lasts4_ocr.db
+python -m vidgrep.ocr_db search "complete*" --db data/lasts4_ocr.db --gap 10 --min-conf 0.7
 ```
 
 Ingest is incremental and safe to re-run while scans are still writing:

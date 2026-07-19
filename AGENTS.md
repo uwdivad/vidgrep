@@ -4,7 +4,7 @@ High-signal notes for AI agents. `CLAUDE.md` has the longer architecture overvie
 
 ## What this is
 
-`vidgrep` — a CLI that scans a video for text (EasyOCR) or an image template (OpenCV cross-correlation) and extracts padded clips around each match via FFmpeg. Flat layout with `pyproject.toml` console scripts:
+`vidgrep` — a CLI that scans a video for text (EasyOCR) or an image template (OpenCV cross-correlation) and extracts padded clips around each match via FFmpeg. All source modules live in the `vidgrep/` package, with `pyproject.toml` console scripts:
 
 ```bash
 vidgrep video.mp4 --text "GOAL"        # clip mode
@@ -16,8 +16,8 @@ vidgrep-region video.mp4               # interactive helper to pick a --region b
 vidgrep-tui                            # Textual scan dashboard
 ```
 
-Direct script execution from the repo root still works for development:
-`python main.py ...` and `python select_region.py ...`.
+Direct execution from the repo root still works for development:
+`python -m vidgrep ...` and `python -m vidgrep.select_region ...`.
 
 ## Setup — install order matters
 
@@ -38,12 +38,12 @@ Fast unit tests cover pure-Python parser, inventory, and worker queue behavior. 
 
 ```bash
 python -m pytest
-python -m py_compile main.py args.py clipper.py detector.py scan.py inventory.py worker.py select_region.py tui.py
-python main.py --help && python main.py scan --help && python main.py inventory --help && python main.py worker --help
+python -m compileall -q vidgrep
+python -m vidgrep --help && python -m vidgrep scan --help && python -m vidgrep inventory --help && python -m vidgrep worker --help
 vidgrep --help && vidgrep scan --help && vidgrep inventory --help && vidgrep worker --help && vidgrep-region --help && vidgrep-tui --help
 ```
 
-`test_commands.md` is a set of manual command templates (placeholders in ALL_CAPS) for OCR/FFmpeg/TUI flows that are not covered by unit tests.
+`docs/test_commands.md` is a set of manual command templates (placeholders in ALL_CAPS) for OCR/FFmpeg/TUI flows that are not covered by unit tests.
 
 ## Architecture gotchas not obvious from filenames
 
@@ -67,4 +67,4 @@ vidgrep --help && vidgrep scan --help && vidgrep inventory --help && vidgrep wor
 
 ## Files
 
-`main.py` (entry + orchestration only) · `args.py` (arg parsers + usage epilogs) · `detector.py` (`TextDetector`, `TemplateDetector`) · `clipper.py` (`VideoClipper`, `_FFSampler`, `_SWCapture`, all FFmpeg calls) · `scan.py` (OCR scan subcommand, `find_video_files`, `VIDEO_EXTENSIONS`) · `inventory.py` (drive/directory video inventory CSV + JSON) · `worker.py` (resumable CSV-backed OCR queue runner) · `select_region.py` (standalone region picker) · `tui.py` (optional Textual dashboard). `scrap/` is gitignored; scan-generated `*.jsonl`/`*.json` at the repo root are scratch — don't commit them.
+Inside the `vidgrep/` package: `main.py` (entry + orchestration only) · `args.py` (arg parsers + usage epilogs) · `detector.py` (`TextDetector`, `TemplateDetector`) · `clipper.py` (`VideoClipper`, `_FFSampler`, `_SWCapture`, all FFmpeg calls) · `scan.py` (OCR scan subcommand, `find_video_files`, `VIDEO_EXTENSIONS`) · `inventory.py` (drive/directory video inventory CSV + JSON) · `worker.py` (resumable CSV-backed OCR queue runner) · `agent.py` (OpenAI result-grouping subcommand) · `ocr_db.py` (SQLite FTS ingest/search over scan output) · `select_region.py` (standalone region picker) · `tui.py` (optional Textual dashboard). Notebooks live in `notebooks/`, manual test docs in `docs/`. `scrap/` and `data/` are gitignored scratch — local scan outputs, inventories, and databases belong in `data/`; don't commit them.

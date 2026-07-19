@@ -3,8 +3,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from clipper import VideoClipper
-from detector import TemplateDetector
+from vidgrep.clipper import VideoClipper
+from vidgrep.detector import TemplateDetector
 
 
 @pytest.mark.parametrize("mode", ["reencode", "lossless"])

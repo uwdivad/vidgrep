@@ -1,7 +1,7 @@
 import argparse
 import math
 
-from agent import DEFAULT_MODEL
+from vidgrep.agent import DEFAULT_MODEL
 
 
 def _positive_int(value: str) -> int:
@@ -35,7 +35,11 @@ def _probability(value: str) -> float:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="vidgrep",
-        description="Clip video segments where text or an image pattern appears",
+        description=(
+            "Clip video segments where text or an image pattern appears. "
+            "Scan-only, inventory, queue, and grouping workflows are available "
+            "as subcommands (see below)."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_USAGE,
     )
@@ -89,7 +93,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--region", nargs=4, type=int, metavar=("X", "Y", "W", "H"),
-        help="Only scan this rectangle in each frame (speeds up OCR significantly)",
+        help=(
+            "Only scan this pixel rectangle in each frame - speeds up OCR "
+            "significantly (pick one interactively with vidgrep-region)"
+        ),
     )
     p.add_argument(
         "--merge-gap", type=_nonnegative_float, default=2.0, metavar="SEC",
@@ -181,7 +188,10 @@ def build_scan_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--region", nargs=4, type=int, metavar=("X", "Y", "W", "H"),
-        help="Only scan this rectangle in each frame",
+        help=(
+            "Only scan this pixel rectangle in each frame "
+            "(pick one interactively with vidgrep-region)"
+        ),
     )
     p.add_argument(
         "--lang", default="en", metavar="CODES",
@@ -274,7 +284,10 @@ def build_worker_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--region", nargs=4, type=int, metavar=("X", "Y", "W", "H"),
-        help="Only scan this rectangle in each frame",
+        help=(
+            "Only scan this pixel rectangle in each frame "
+            "(pick one interactively with vidgrep-region)"
+        ),
     )
     p.add_argument(
         "--lang", default="en", metavar="CODES",
@@ -435,6 +448,17 @@ Usage examples
 
 
 _USAGE = """\
+Subcommands
+-----------
+  scan       Scan videos for text matches; write JSONL + JSON results, no clipping
+  inventory  Find video files across drives/directories; write CSV + JSON
+  worker     Resumable OCR scan queue driven by an inventory CSV
+  agent      Group scan JSONL rows into canonical text intervals via OpenAI
+
+  Run "vidgrep <subcommand> --help" (or "vidgrep help <subcommand>") for details.
+  Companion tools: vidgrep-region (pick a --region box interactively),
+  vidgrep-tui (interactive scan dashboard).
+
 Usage examples
 --------------
   # Clip every segment where "GOAL" appears (+/-5 s padding)

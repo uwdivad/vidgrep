@@ -4,7 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-import worker
+
+from vidgrep import worker
 
 
 def _args(csv_path, **overrides):
@@ -74,7 +75,7 @@ def test_run_scan_job_writes_jsonl_and_metadata(tmp_path, monkeypatch):
         })
         return 1, None
 
-    monkeypatch.setattr("scan.scan_video", fake_scan_video)
+    monkeypatch.setattr("vidgrep.scan.scan_video", fake_scan_video)
 
     match_count = worker._run_scan_job(args, video_path, output_stem, object(), "options-1")
 
@@ -278,7 +279,7 @@ def test_run_scan_job_writes_profile_metrics(tmp_path, monkeypatch):
             "detect_fps": 12.5,
         }
 
-    monkeypatch.setattr("scan.scan_video", fake_scan_video)
+    monkeypatch.setattr("vidgrep.scan.scan_video", fake_scan_video)
 
     worker._run_scan_job(args, video_path, output_stem, object(), "options-1")
 
@@ -299,7 +300,7 @@ def test_run_scan_job_does_not_publish_partial_jsonl(tmp_path, monkeypatch):
         on_record({"text": "partial"})
         raise RuntimeError("OCR failed")
 
-    monkeypatch.setattr("scan.scan_video", fake_scan_video)
+    monkeypatch.setattr("vidgrep.scan.scan_video", fake_scan_video)
 
     with pytest.raises(RuntimeError, match="OCR failed"):
         worker._run_scan_job(args, video_path, output_stem, object(), "options-1")

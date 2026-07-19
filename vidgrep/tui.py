@@ -507,9 +507,9 @@ if TEXTUAL_IMPORT_ERROR is None:
 
         @work(thread=True)
         def run_scan(self, job: ScanJob) -> None:
-            from clipper import VideoClipper
-            from detector import TextDetector
-            from scan import find_video_files
+            from vidgrep.clipper import VideoClipper
+            from vidgrep.detector import TextDetector
+            from vidgrep.scan import find_video_files
 
             worker = get_current_worker()
             try:
@@ -592,7 +592,7 @@ if TEXTUAL_IMPORT_ERROR is None:
 
         @work(thread=True)
         def extract_intervals(self, job: ScanJob, intervals: list[IntervalRecord]) -> None:
-            from clipper import VideoClipper
+            from vidgrep.clipper import VideoClipper
 
             try:
                 saved: list[str] = []

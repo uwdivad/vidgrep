@@ -18,8 +18,8 @@ vidgrep-region video.mp4
 vidgrep-tui
 ```
 
-Direct script execution from the repo root still works for development:
-`python main.py ...` and `python select_region.py ...`.
+Direct execution from the repo root still works for development:
+`python -m vidgrep ...` and `python -m vidgrep.select_region ...`.
 
 ## Setup
 
@@ -39,11 +39,11 @@ FFmpeg and ffprobe must be available on `PATH`.
 
 ```bash
 python -m pytest
-python -m py_compile main.py args.py agent.py clipper.py detector.py scan.py inventory.py worker.py select_region.py tui.py
+python -m compileall -q vidgrep
 ```
 
 The unit tests cover parser, inventory, and worker CSV behavior without invoking
-EasyOCR, FFmpeg, or real videos. Use `test_commands.md` for manual OCR,
+EasyOCR, FFmpeg, or real videos. Use `docs/test_commands.md` for manual OCR,
 clipping, and TUI smoke checks.
 
 ## Running
@@ -61,29 +61,35 @@ See `vidgrep --help` and `vidgrep scan --help` for all flags.
 
 ## Architecture
 
-Flat modules with setuptools console scripts in `pyproject.toml`:
+All source modules live in the `vidgrep/` package, with setuptools console
+scripts in `pyproject.toml`. Notebooks live in `notebooks/`, manual test docs in
+`docs/`, and local scan outputs/databases in the gitignored `data/`.
 
-- **`main.py`** — entry point and orchestration. Dispatches the hand-rolled
-  `scan` subcommand, constructs a detector and `VideoClipper`, calls
-  `find_intervals`, then `extract_clips`.
-- **`args.py`** — clip-mode and scan-mode argparse parser definitions.
-- **`detector.py`** — `TextDetector` and `TemplateDetector`, both duck-typed on
-  `detect(frame) -> bool` and `detect_batch(frames) -> list[bool]`.
-- **`clipper.py`** — `VideoClipper`, frame sampling, FFmpeg readers, stats, clip
-  extraction, NVENC codec detection, and concat output.
-- **`scan.py`** — scan-only subcommand, recursive video discovery, streaming
-  JSONL writes, and summary JSON metadata.
-- **`inventory.py`** — drive/directory video inventory by extension, with CSV
-  records and JSON metadata/totals/skipped path details.
-- **`worker.py`** — resumable CSV-backed OCR queue runner that scans in-process
-  via `scan.scan_video`, writes per-video JSONL/JSON output, and updates
-  `processed` status (plus the scan `options_id`) in the CSV in place.
-- **`agent.py`** — `agent` subcommand: groups scan JSONL rows into canonical
-  text intervals using the OpenAI API, caching canonicalizations in a
+- **`vidgrep/main.py`** — entry point and orchestration. Dispatches the
+  hand-rolled `scan` subcommand, constructs a detector and `VideoClipper`,
+  calls `find_intervals`, then `extract_clips`.
+- **`vidgrep/args.py`** — clip-mode and scan-mode argparse parser definitions.
+- **`vidgrep/detector.py`** — `TextDetector` and `TemplateDetector`, both
+  duck-typed on `detect(frame) -> bool` and `detect_batch(frames) -> list[bool]`.
+- **`vidgrep/clipper.py`** — `VideoClipper`, frame sampling, FFmpeg readers,
+  stats, clip extraction, NVENC codec detection, and concat output.
+- **`vidgrep/scan.py`** — scan-only subcommand, recursive video discovery,
+  streaming JSONL writes, and summary JSON metadata.
+- **`vidgrep/inventory.py`** — drive/directory video inventory by extension,
+  with CSV records and JSON metadata/totals/skipped path details.
+- **`vidgrep/worker.py`** — resumable CSV-backed OCR queue runner that scans
+  in-process via `scan.scan_video`, writes per-video JSONL/JSON output, and
+  updates `processed` status (plus the scan `options_id`) in the CSV in place.
+- **`vidgrep/agent.py`** — `agent` subcommand: groups scan JSONL rows into
+  canonical text intervals using the OpenAI API, caching canonicalizations in a
   `.agent.state.json` keyed to the search term and model.
-- **`select_region.py`** — interactive helper exposed as `vidgrep-region`.
-- **`tui.py`** — optional Textual dashboard exposed as `vidgrep-tui`; uses
-  callbacks from `VideoClipper` and detectors instead of parsing console output.
+- **`vidgrep/ocr_db.py`** — SQLite ingest and FTS5 search over scan output
+  (`python -m vidgrep.ocr_db`).
+- **`vidgrep/select_region.py`** — interactive helper exposed as
+  `vidgrep-region`.
+- **`vidgrep/tui.py`** — optional Textual dashboard exposed as `vidgrep-tui`;
+  uses callbacks from `VideoClipper` and detectors instead of parsing console
+  output.
 
 ## Key behaviours to be aware of
 
