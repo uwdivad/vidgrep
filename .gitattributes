@@ -1,0 +1,40 @@
+# Normalize text files across operating systems.
+* text=auto eol=lf
+
+# Windows command scripts require CRLF line endings.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# The analysis notebook is supporting research, not the primary implementation.
+# Excluding it makes GitHub correctly present this repository as a Python project.
+ocr_analysis.ipynb -text linguist-detectable=false
+*.ipynb -text linguist-detectable=false
+
+# Generated scan, inventory, database, cache, and coverage output.
+*_ocr/** linguist-generated
+*.agent.state.json linguist-generated
+*.jsonl linguist-generated
+*.db binary linguist-generated
+*.db-shm binary linguist-generated
+*.db-wal binary linguist-generated
+*.sqlite binary linguist-generated
+*.sqlite3 binary linguist-generated
+htmlcov/** linguist-generated
+coverage/** linguist-generated
+
+# Video, image, and model assets are binary.
+*.mp4 binary
+*.mkv binary
+*.avi binary
+*.mov binary
+*.webm binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.npy binary
+*.npz binary
+*.pt binary
+*.pth binary
+*.onnx binary
