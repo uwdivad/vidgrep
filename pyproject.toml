@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vidgrep"
-version = "0.1.0"
+version = "0.0.1"
 description = "Scan videos for text or image templates and extract matching clips."
 readme = "README.md"
 requires-python = ">=3.9"
