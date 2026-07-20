@@ -7,6 +7,8 @@ vidgrep match.mp4 --text "GOAL"
 vidgrep gameplay.mp4 --template logo.png
 ```
 
+![label_boundary_box.png](assets/label_boundary_box.png))
+
 ## How it works
 
 1. Samples every Nth frame of the video (default: every 3rd) — or one frame every N seconds with `--interval`. Sampling and `--region` cropping run inside FFmpeg, so skipped frames are nearly free. On NVIDIA GPUs, decoding runs on the NVDEC hardware engine with the region cropped before frames leave the GPU, falling back to software decode automatically
